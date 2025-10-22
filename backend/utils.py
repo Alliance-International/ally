@@ -230,7 +230,7 @@ async def send_welcome_email(recipient_email, username):
         return
 
     subject = "Welcome to Ally, your AI Meeting Wizard!"
-    app_url = "https://ally-frontend-vw00.onrender.com"
+    app_url = "https://ally-vimd.onrender.com"
     html_content = config.welcome_template.replace("[USER_NAME]", html.escape(username))
     html_content = html_content.replace("[MY_URL]", app_url)
     html_content = html_content.replace("[CURRENT_YEAR]", str(datetime.now().year))
@@ -249,7 +249,7 @@ async def send_reminder_email(task_data, user_id, task_id, reminder_type):
         return
 
     subject, reminder_message = "", ""
-    base_url = os.getenv("MY_API", "https://ally-backend-y2pq.onrender.com")
+    base_url = os.getenv("MY_API", "https://ally-back.onrender.com")
     update_url = f"{base_url}/update-task-status"
     in_progress_url = f"{update_url}?userId={user_id}&taskId={task_id}&newStatus=In Progress"
     completed_url = f"{update_url}?userId={user_id}&taskId={task_id}&newStatus=Completed"

@@ -12,7 +12,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 
 const actionPage = (user, db) => {
-  const MY_API = "https://ally-backend-y2pq.onrender.com";
+  const MY_API = "https://ally-back.onrender.com";
   const currentUser = user;
   const actionLogsCollectionRef = collection(
     db,

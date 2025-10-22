@@ -8,7 +8,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 
 const App = (() => {
-  const MY_API = "https://ally-backend-y2pq.onrender.com";
+  const MY_API = "https://ally-back.onrender.com";
   let db, currentUser;
 
   const state = {

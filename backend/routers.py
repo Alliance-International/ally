@@ -210,7 +210,7 @@ async def send_email_endpoint(
             all_attachments.append({"name": attachment.filename, "content": encoded_content})
 
     if config.email_template:
-        app_url = "https://ally-frontend-vw00.onrender.com"
+        app_url = "https://ally-vimd.onrender.com"
         final_html_content = config.email_template.replace("[EMAIL_SUBJECT]", html.escape(subject))
 
         preheader_text = ' '.join(soup.get_text().split())

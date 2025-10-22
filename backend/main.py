@@ -14,7 +14,7 @@ load_html_templates()
 app = FastAPI()
 
 origins = [
-    "https://ally-frontend-vw00.onrender.com"  
+    "https://ally-vimd.onrender.com"  
 ]
 
 app.add_middleware(
