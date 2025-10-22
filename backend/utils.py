@@ -103,7 +103,7 @@ async def transcribe_with_assemblyai(file: UploadFile, language: str):
 
 
 
-async def generate_gemini_content(prompt: str, model_name: str = "gemini-1.5-flash-latest", is_json: bool = False):
+async def generate_gemini_content(prompt: str, model_name: str = "gemini-2.5-flash", is_json: bool = False):
     try:
         model = genai.GenerativeModel(model_name)
         response_type = "application/json" if is_json else "text/plain"
