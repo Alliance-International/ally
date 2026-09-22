@@ -151,28 +151,22 @@
           class="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 lg:p-8"
         >
           <div class="max-w-7xl mx-auto">
-            <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
-              <div class="flex min-w-72 flex-col gap-2">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
+              <div class="flex min-w-0 flex-col gap-2">
                 <h1
-                  class="text-[#0d141c] tracking-tight text-2xl md:text-4xl font-bold text-center md:text-left"
+                  class="text-[#0d141c] tracking-tight text-2xl md:text-4xl font-bold"
                 >
                   Action Logs Management
                 </h1>
-                <p class="text-[#49739c] text-base text-center">
+                <p class="text-[#49739c] text-base">
                   Manage and track action items from your latest meeting
                   summary.
                 </p>
               </div>
-              <div>
-                <!-- <button
-                  id="create-task-btn"
-                  class="bg-blue-600 text-white font-medium px-3 sm:px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
-                >
-                  Create Task
-                </button> -->
+              <div class="sm:shrink-0">
                 <button
                   id="create-task-btn"
-                  class="bg-blue-600 text-white font-medium px-3 sm:px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
+                  class="w-full sm:w-auto bg-blue-600 text-white font-medium px-4 py-2.5 rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base"
                 >
                   Create Task
                 </button>
@@ -195,6 +189,7 @@
                   </div>
                   <input
                     id="search-input"
+                    aria-label="Search action items"
                     placeholder="Search action items"
                     class="form-input w-full min-w-0 flex-1 rounded-r-lg text-[#0d141c] focus:outline-none focus:ring-0 border-none bg-[#e7edf4] placeholder:text-[#49739c] px-4 text-base"
                     value=""
@@ -206,7 +201,7 @@
               <div class="relative">
                 <button
                   id="assignee-filter-btn"
-                  class="filter-btn flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-[#e7edf4] pl-4 pr-2"
+                  class="filter-btn flex min-h-10 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-[#e7edf4] pl-4 pr-2"
                   data-filter-type="assignee"
                 >
                   <p class="text-[#0d141c] text-sm font-medium">Assignee</p>
@@ -225,7 +220,7 @@
               <div class="relative">
                 <button
                   id="status-filter-btn"
-                  class="filter-btn flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-[#e7edf4] pl-4 pr-2"
+                  class="filter-btn flex min-h-10 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-[#e7edf4] pl-4 pr-2"
                   data-filter-type="status"
                 >
                   <p class="text-[#0d141c] text-sm font-medium">Status</p>
@@ -250,9 +245,9 @@
             </div>
 
             <div
-              class="w-full md:overflow-x-auto rounded-lg md:border md:border-[#cedbe8]"
+              class="action-table-shell"
             >
-              <table class="w-full md:min-w-[700px] responsive-table">
+              <table class="w-full responsive-table action-table">
                 <thead class="bg-slate-50">
                   <tr>
                     <th
@@ -289,9 +284,8 @@
                 </thead>
                 <tbody
                   id="action-items-tbody"
-                  class="md:divide-y md:divide-[#cedbe8]"
                 >
-                  <tr>
+                  <tr class="table-message-row">
                     <td colspan="6" class="text-center p-8 text-gray-500">
                       Loading action items...
                     </td>

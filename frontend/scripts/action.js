@@ -71,6 +71,7 @@ async function actionPage() {
 
   function showTableMessage(message, className = "text-gray-500") {
     const row = document.createElement("tr");
+    row.className = "table-message-row";
     const cell = createElement("td", `p-8 text-center ${className}`, message);
     cell.colSpan = 6;
     row.appendChild(cell);
@@ -85,6 +86,7 @@ async function actionPage() {
 
   function taskRow(task) {
     const row = document.createElement("tr");
+    row.className = "task-row";
     row.dataset.taskId = task.id;
 
     const titleCell = createElement(
@@ -160,10 +162,24 @@ async function actionPage() {
 
     const actionsCell = createElement("td", "p-4 text-sm text-left");
     actionsCell.dataset.label = "Actions";
-    const actions = createElement("div", "action-buttons-container gap-3");
+    const actions = createElement("div", "task-actions");
+    const toggle = createElement("button", "action-menu-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", `task-menu-${task.id}`);
+    toggle.setAttribute("aria-label", `Actions for ${task.title}`);
+    toggle.append(
+      createElement("span", "", "Actions"),
+      createElement("span", "action-menu-chevron", "⌄")
+    );
+    const menu = createElement("div", "action-menu");
+    menu.id = `task-menu-${task.id}`;
+    menu.hidden = true;
+    menu.setAttribute("role", "group");
+    menu.setAttribute("aria-label", `Actions for ${task.title}`);
     const edit = createElement(
       "button",
-      "edit-btn text-blue-600 hover:text-blue-800",
+      "edit-btn action-menu-item",
       "Edit"
     );
     edit.type = "button";
@@ -171,7 +187,7 @@ async function actionPage() {
     edit.title = "Edit task";
     const remove = createElement(
       "button",
-      "delete-btn text-red-600 hover:text-red-800",
+      "delete-btn action-menu-item action-menu-item-danger action-menu-item-separated",
       "Delete"
     );
     remove.type = "button";
@@ -179,7 +195,7 @@ async function actionPage() {
     remove.title = "Delete task";
     const remind = createElement(
       "button",
-      "reminder-btn text-emerald-700 hover:text-emerald-900",
+      "reminder-btn action-menu-item",
       "Remind"
     );
     remind.type = "button";
@@ -199,27 +215,28 @@ async function actionPage() {
       if (task.reviewStatus !== "confirmed") {
         const confirm = createElement(
           "button",
-          "confirm-btn text-green-700 hover:text-green-900",
+          "confirm-btn action-menu-item action-menu-item-approve",
           "Confirm"
         );
         confirm.type = "button";
         confirm.dataset.id = task.id;
         confirm.title = "Confirm the visible task, recipient, and dates";
-        actions.appendChild(confirm);
+        menu.appendChild(confirm);
       }
       if (task.reviewStatus !== "rejected") {
         const reject = createElement(
           "button",
-          "reject-btn text-red-700 hover:text-red-900",
+          "reject-btn action-menu-item action-menu-item-danger",
           "Reject"
         );
         reject.type = "button";
         reject.dataset.id = task.id;
         reject.title = "Reject this AI proposal and disable reminders";
-        actions.appendChild(reject);
+        menu.appendChild(reject);
       }
     }
-    actions.append(remind, edit, remove);
+    menu.append(remind, edit, remove);
+    actions.append(toggle, menu);
     actionsCell.appendChild(actions);
 
     row.append(
@@ -258,6 +275,7 @@ async function actionPage() {
   }
 
   function renderTable() {
+    closeActionMenu();
     const visible = filteredTasks();
     if (!visible.length) {
       showTableMessage(
@@ -268,6 +286,34 @@ async function actionPage() {
       return;
     }
     elements.tableBody.replaceChildren(...visible.map(taskRow));
+  }
+
+  function closeActionMenu({ restoreFocus = false } = {}) {
+    const toggle = elements.tableBody.querySelector(
+      '.action-menu-toggle[aria-expanded="true"]'
+    );
+    if (!toggle) return;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.nextElementSibling.hidden = true;
+    toggle.nextElementSibling.classList.remove("open-up");
+    toggle.closest("tr")?.classList.remove("menu-open");
+    if (restoreFocus) toggle.focus();
+  }
+
+  function toggleActionMenu(toggle) {
+    const wasOpen = toggle.getAttribute("aria-expanded") === "true";
+    closeActionMenu();
+    if (wasOpen) return;
+    const menu = toggle.nextElementSibling;
+    menu.hidden = false;
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.closest("tr")?.classList.add("menu-open");
+    const scrollBottom = table.closest("main")?.getBoundingClientRect().bottom;
+    const visibleBottom = Math.min(window.innerHeight, scrollBottom ?? window.innerHeight);
+    const roomBelow = visibleBottom - toggle.getBoundingClientRect().bottom;
+    if (roomBelow < menu.getBoundingClientRect().height + 12) {
+      menu.classList.add("open-up");
+    }
   }
 
   function dropdownLink(label, value) {
@@ -410,8 +456,13 @@ async function actionPage() {
 
   elements.tableBody.addEventListener("click", async (event) => {
     const button = event.target.closest("button");
+    if (button?.classList.contains("action-menu-toggle")) {
+      toggleActionMenu(button);
+      return;
+    }
     const id = button?.dataset.id;
     if (!button || !id) return;
+    closeActionMenu();
     if (
       button.classList.contains("confirm-btn") ||
       button.classList.contains("reject-btn")
@@ -506,6 +557,7 @@ async function actionPage() {
   document.querySelectorAll(".filter-btn").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
+      closeActionMenu();
       const dropdown = button.nextElementSibling;
       document.querySelectorAll(".filter-dropdown").forEach((candidate) => {
         if (candidate !== dropdown) candidate.style.display = "none";
@@ -551,6 +603,14 @@ async function actionPage() {
       .querySelectorAll(".filter-dropdown")
       .forEach((dropdown) => (dropdown.style.display = "none"));
   });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".task-actions")) closeActionMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeActionMenu({ restoreFocus: true });
+  });
+  table.closest("main")?.addEventListener("scroll", () => closeActionMenu());
+  window.addEventListener("resize", () => closeActionMenu());
 
   await loadTasks({ showLoading: true });
   try {

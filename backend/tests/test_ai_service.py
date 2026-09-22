@@ -13,7 +13,7 @@ from ai.exceptions import (
     AIMalformedResponseError,
 )
 from ai.schemas import MeetingGenerationRequest
-from ai.service import AIService
+from ai.service import AIService, _topic_blocks
 from conftest import configured_settings
 
 
@@ -311,31 +311,33 @@ async def test_topic_indexes_are_sorted_and_deduplicated_deterministically():
         structured=[
             {
                 "topics": [
-                    {"topic": "Zulu", "anchor": "def"},
-                    {"topic": "Alpha", "anchor": "DEF"},
-                    {"topic": "Start", "anchor": "abc"},
+                    {"topic": "Zulu", "block_id": 1},
+                    {"topic": "Alpha", "block_id": 1},
+                    {"topic": "Start", "block_id": 0},
                 ]
             }
         ]
     )
-    topics = await AIService(settings(), provider, FakeStore()).detect_topics("abcdef")
-    assert [(item.topic, item.index) for item in topics] == [("Start", 0), ("Alpha", 3)]
+    topics = await AIService(settings(), provider, FakeStore()).detect_topics("abc\ndef\nghi")
+    assert [(item.topic, item.index) for item in topics] == [("Start", 0), ("Alpha", 4)]
 
 
 @pytest.mark.asyncio
-async def test_unmatched_topic_anchors_are_rejected_after_one_repair():
-    invalid = {"topics": [{"topic": "Outside", "anchor": "not in source"}]}
+async def test_unknown_topic_blocks_are_rejected_after_one_repair():
+    invalid = {"topics": [{"topic": "Outside", "block_id": 99}]}
     provider = FakeProvider(structured=[invalid, invalid])
     with pytest.raises(AIMalformedResponseError):
         await AIService(settings(), provider, FakeStore()).detect_topics("short")
     assert len(provider.structured_calls) == 2
+    assert "unknown_topic_block" in provider.structured_calls[1]["messages"][-1].content
+    assert len(provider.structured_calls[0]["messages"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_topic_anchor_mapping_preserves_original_whitespace_index():
+async def test_topic_block_mapping_preserves_original_whitespace_index():
     provider = FakeProvider(
         structured=[
-            {"topics": [{"topic": "Second", "anchor": "SECOND topic starts"}]}
+            {"topics": [{"topic": "Second", "block_id": 1}]}
         ]
     )
     source = "First topic.\n\nSecond   topic starts here."
@@ -463,11 +465,11 @@ async def test_autocomplete_sends_previous_paragraphs_and_trailing_whitespace():
 
 
 @pytest.mark.asyncio
-async def test_topic_multiline_anchors_no_longer_fail_validation():
+async def test_multiline_sections_map_without_copied_anchors():
     source = "\n  Budget\nApproved spending for October.\n\nHiring\nRecruit two engineers.\n"
     provider = FakeProvider(structured=[{"topics": [
-        {"topic": "Budget", "anchor": "Budget\nApproved spending for October."},
-        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+        {"topic": "Budget", "block_id": 0},
+        {"topic": "Hiring", "block_id": 2},
     ]}])
     result = await AIService(settings(), provider, FakeStore()).detect_topics(source)
     assert [(topic.topic, topic.index) for topic in result] == [
@@ -480,7 +482,7 @@ async def test_topic_multiline_anchors_no_longer_fail_validation():
 async def test_topic_offsets_preserve_crlf_leading_spaces_and_javascript_unicode_units():
     source = "\r\n  🚀 Launch approved.\r\n\r\nHiring\r\nRecruit two engineers.\r\n"
     provider = FakeProvider(structured=[{"topics": [
-        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+        {"topic": "Hiring", "block_id": 1},
     ]}])
     result = await AIService(settings(), provider, FakeStore()).detect_topics(source)
     assert result[0].index == len(source[:source.index("Hiring")].encode("utf-16-le")) // 2
@@ -489,10 +491,114 @@ async def test_topic_offsets_preserve_crlf_leading_spaces_and_javascript_unicode
 @pytest.mark.asyncio
 async def test_topic_titles_still_reject_html_and_newlines():
     for title in ["<b>Budget</b>", "Budget\nInjected", "   "]:
-        output = {"topics": [{"topic": title, "anchor": "Budget"}]}
+        output = {"topics": [{"topic": title, "block_id": 0}]}
         provider = FakeProvider(structured=[output, output])
         with pytest.raises(AIMalformedResponseError):
             await AIService(settings(), provider, FakeStore()).detect_topics("Budget")
+
+
+def test_numbered_blocks_preserve_all_content_and_bound_metadata():
+    source = "\r\n  " + "\r\n".join(f"Line {number}: value" for number in range(1000)) + "\r\n"
+    blocks, indexes = _topic_blocks(source)
+    assert 1 < len(blocks) <= 256
+    assert "".join(block["text"] for block in blocks) == source.lstrip()
+    assert [block["block_id"] for block in blocks] == list(range(len(blocks)))
+    assert indexes[0] == 4
+
+
+@pytest.mark.asyncio
+async def test_identical_source_sections_map_to_the_selected_occurrence():
+    source = "Introduction.\nRepeated section.\nDifferent section.\nRepeated section.\n"
+    provider = FakeProvider(structured=[{"topics": [{"topic": "Later topic", "block_id": 3}]}])
+    topics = await AIService(settings(), provider, FakeStore()).detect_topics(source)
+    assert topics[0].index == source.rindex("Repeated section")
+
+
+@pytest.mark.asyncio
+async def test_topic_schema_constrains_ids_and_uses_available_output_budget():
+    import json
+
+    provider = FakeProvider(structured=[{"topics": []}])
+    await AIService(settings(), provider, FakeStore()).detect_topics("First. Second.\nThird.")
+    call = provider.structured_calls[0]
+    assert call["schema"]["$defs"]["TopicBlockSuggestion"]["properties"]["block_id"] == {
+        "type": "integer", "enum": [0, 1, 2],
+    }
+    assert call["schema"]["properties"]["topics"]["maxItems"] == 3
+    assert call["max_output_tokens"] == settings().ai_max_output_tokens
+    payload = json.loads(call["messages"][1].content)
+    assert payload["max_topics"] == 3
+    assert [block["text"] for block in payload["blocks"]] == ["First. ", "Second.\n", "Third."]
+    assert "anchor" not in str(call["schema"])
+
+
+@pytest.mark.asyncio
+async def test_topic_output_count_is_bounded_when_token_budget_is_small():
+    import json
+
+    provider = FakeProvider(structured=[{"topics": []}])
+    await AIService(settings(ai_max_output_tokens=512), provider, FakeStore()).detect_topics("One. Two. Three.")
+    assert json.loads(provider.structured_calls[0]["messages"][1].content)["max_topics"] == 1
+
+
+@pytest.mark.asyncio
+async def test_long_paragraph_never_needs_to_be_copied_into_provider_output():
+    import json
+
+    source = "TECHNICAL OVERVIEW\n" + ("The service processes requests reliably, " * 20) + "\nNEXT STEPS\nReview deployment."
+    provider = FakeProvider(structured=[{"topics": [
+        {"topic": "Overview", "block_id": 0}, {"topic": "Next steps", "block_id": 2},
+    ]}])
+    topics = await AIService(settings(ai_max_input_chars=5000, ai_max_estimated_input_tokens=5000), provider, FakeStore()).detect_topics(source)
+    assert [(topic.topic, topic.index) for topic in topics] == [("Overview", 0), ("Next steps", source.index("NEXT STEPS"))]
+    payload = json.loads(provider.structured_calls[0]["messages"][1].content)
+    assert "".join(block["text"] for block in payload["blocks"]) == source
+    assert len(provider.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_topic_failure_logs_only_categories_and_retry_can_recover(caplog):
+    secret = "private-document-value"
+    provider = FakeProvider(structured=[
+        {"topics": [{"topic": secret + "\ninvalid", "block_id": 0}]},
+        {"topics": [{"topic": "Recovered", "block_id": 0}]},
+    ])
+    topics = await AIService(settings(), provider, FakeStore()).detect_topics(secret)
+    assert topics[0].topic == "Recovered"
+    assert "schema=ally_topics attempt=1 reason=schema_validation" in caplog.text
+    assert secret not in caplog.text
+    assert secret not in provider.structured_calls[1]["messages"][-1].content
+
+
+@pytest.mark.asyncio
+async def test_truncated_topic_response_gets_one_informed_retry(caplog):
+    provider = FakeProvider(structured=[
+        AIMalformedResponseError("raw private content", reason="output_truncated"),
+        {"topics": [{"topic": "Recovered", "block_id": 0}]},
+    ])
+    assert len(await AIService(settings(), provider, FakeStore()).detect_topics("A source.")) == 1
+    assert "reason=output_truncated" in caplog.text
+    assert "raw private content" not in caplog.text
+    assert "output_truncated" in provider.structured_calls[1]["messages"][-1].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("block_id", [-1, 0.5, "0", True])
+async def test_topic_block_ids_are_strict_integers(block_id):
+    output = {"topics": [{"topic": "Bad ID", "block_id": block_id}]}
+    provider = FakeProvider(structured=[output, output])
+    with pytest.raises(AIMalformedResponseError):
+        await AIService(settings(), provider, FakeStore()).detect_topics("A source.")
+
+
+@pytest.mark.asyncio
+async def test_topic_transport_errors_are_not_retried_as_validation_errors():
+    from ai.exceptions import AITransportError
+
+    provider = FakeProvider(structured=[AITransportError("transport failure")])
+    with pytest.raises(AITransportError):
+        await AIService(settings(), provider, FakeStore()).detect_topics("A source.")
+    assert len(provider.structured_calls) == 1
 
 
 @pytest.mark.asyncio

@@ -135,18 +135,21 @@ class GroqProvider:
     def _result(completion: Any, model: str) -> ProviderTextResult:
         choices = getattr(completion, "choices", None)
         if not choices:
-            raise AIMalformedResponseError("missing choices")
+            raise AIMalformedResponseError("missing choices", reason="missing_choices")
         choice = choices[0]
         message = getattr(choice, "message", None)
         refusal = bool(getattr(message, "refusal", None))
         if refusal:
             raise AIRefusalError("provider refused request")
-        content = getattr(message, "content", None)
-        if not isinstance(content, str) or not content.strip():
-            raise AIMalformedResponseError("empty provider content")
         finish_reason = str(getattr(choice, "finish_reason", "") or "")
         if finish_reason != "stop":
-            raise AIMalformedResponseError("provider completion was not complete")
+            raise AIMalformedResponseError(
+                "provider completion was not complete",
+                reason="output_truncated" if finish_reason == "length" else "incomplete_completion",
+            )
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise AIMalformedResponseError("empty provider content", reason="empty_content")
         usage = getattr(completion, "usage", None)
         token_usage = TokenUsage(
             input_tokens=getattr(usage, "prompt_tokens", None),
@@ -218,9 +221,9 @@ class GroqProvider:
         try:
             data = json.loads(text_result.content)
         except (json.JSONDecodeError, TypeError) as error:
-            raise AIMalformedResponseError("provider returned malformed JSON") from error
+            raise AIMalformedResponseError("provider returned malformed JSON", reason="invalid_json") from error
         if not isinstance(data, dict):
-            raise AIMalformedResponseError("structured response must be an object")
+            raise AIMalformedResponseError("structured response must be an object", reason="invalid_object")
         return ProviderStructuredResult(
             data=data,
             provider=text_result.provider,

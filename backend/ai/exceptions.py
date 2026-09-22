@@ -47,6 +47,16 @@ class AIRefusalError(AIError):
 class AIMalformedResponseError(AIError):
     category = "malformed_provider_response"
 
+    def __init__(self, message: str, *, reason: str = "invalid_response") -> None:
+        super().__init__(message)
+        # Only server-owned categories may reach logs or repair instructions.
+        allowed = {
+            "missing_choices", "empty_content", "output_truncated",
+            "incomplete_completion", "invalid_json", "invalid_object",
+            "unknown_topic_block", "too_many_topics", "invalid_response",
+        }
+        self.reason = reason if reason in allowed else "invalid_response"
+
 
 class AIInputTooLargeError(AIError):
     category = "input_too_large"

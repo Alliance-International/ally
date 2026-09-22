@@ -72,6 +72,26 @@ def provider(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "reason"),
+    [
+        (completion(content="", finish_reason="length"), "output_truncated"),
+        (completion(content=""), "empty_content"),
+        (completion(choices=False), "missing_choices"),
+        (completion(content="partial", finish_reason="unknown"), "incomplete_completion"),
+    ],
+)
+async def test_incomplete_responses_have_safe_diagnostic_categories(response, reason):
+    with pytest.raises(AIMalformedResponseError) as error:
+        await provider(FakeClient(response)).generate_structured(
+            messages=[AIMessage("user", "private source")],
+            schema_name="test", schema={"type": "object"},
+            temperature=0.1, max_output_tokens=100,
+        )
+    assert error.value.reason == reason
+
+
+@pytest.mark.asyncio
 async def test_successful_text_request_has_no_tools_or_browser_controls():
     client = FakeClient(completion())
     result = await provider(client).generate_text(

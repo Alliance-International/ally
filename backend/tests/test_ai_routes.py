@@ -162,12 +162,12 @@ def test_autocomplete_accepts_short_prefix_and_bounded_document_context():
         uninstall()
 
 
-def test_topics_route_accepts_multiline_provider_anchors_end_to_end():
+def test_topics_route_maps_numbered_multiline_sections_end_to_end():
     from ai.service import AIService
     from test_ai_service import FakeProvider, settings
 
     provider = FakeProvider(structured=[{"topics": [
-        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+        {"topic": "Hiring", "block_id": 1},
     ]}])
     install(AIService(settings(), provider, None))
     try:

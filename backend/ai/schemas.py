@@ -221,9 +221,9 @@ class MeetingAIOutput(StrictModel):
         return value
 
 
-class TopicAnchorSuggestion(StrictModel):
+class TopicBlockSuggestion(StrictModel):
     topic: str = Field(min_length=1, max_length=200)
-    anchor: str = Field(min_length=1, max_length=200)
+    block_id: int = Field(ge=0, strict=True)
 
     @field_validator("topic")
     @classmethod
@@ -235,16 +235,8 @@ class TopicAnchorSuggestion(StrictModel):
             raise ValueError("topic is required")
         return value
 
-    @field_validator("anchor")
-    @classmethod
-    def validate_anchor(cls, value: str) -> str:
-        # An anchor is a source excerpt, not a title. Multiline excerpts are
-        # valid and are only matched against source text, never rendered.
-        return validate_editor_text(value).strip()
-
-
 class TopicsAIOutput(StrictModel):
-    topics: list[TopicAnchorSuggestion]
+    topics: list[TopicBlockSuggestion]
 
 
 class TopicSuggestion(StrictModel):

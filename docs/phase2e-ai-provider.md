@@ -28,7 +28,7 @@ Authenticated routes are:
   distributed limiter;
 - `POST /ai/question`: separate bounded question and context fields;
 - `POST /ai/topics`: validated topics with zero-based UTF-16 source indexes resolved
-  locally from provider-returned verbatim source anchors;
+  locally from provider-selected, server-numbered source blocks;
 - `POST /action-items/{id}/review`: owner-scoped confirm or reject, with the
   complete reviewed action fields.
 
@@ -52,15 +52,22 @@ The browser debounces typing, cancels obsolete requests, and rejects late
 responses after a document change, cursor move, selection, blur, or toggle-off.
 Tab, Enter, and clicking the suggestion accept it; Escape dismisses it.
 
-Topic requests preserve the original whitespace and line endings. Provider
-anchors may span multiple lines, while topic titles remain single-line plain
-text. Previously, applying the title's single-line validation to anchors could
-reject valid provider output twice and return HTTP 502. Source matching still
-rejects invented anchors. Index conversion counts emoji as UTF-16 units for the
-browser, and insertion accounts for Quill embeds omitted from plain text.
+Topic requests preserve the original whitespace and line endings. The server
+numbers paragraph/sentence blocks and retains their original UTF-16 indexes.
+The model selects `block_id` values and concise titles; it no longer has to
+copy exact source excerpts. This removes failures caused by paraphrased,
+oversized, or differently formatted anchors. The provider schema restricts IDs
+to the supplied blocks, and local validation still rejects unknown IDs or
+invalid titles. Metadata is bounded to 256 blocks by grouping adjacent sections
+without dropping content. Topic count is bounded by the configured topic and
+output budgets, with the full configured output ceiling available instead of
+the former 2,000-token ceiling. Index conversion counts emoji as UTF-16 units
+for the browser, and insertion accounts for Quill embeds omitted from plain text.
 Labels are applied as one undoable edit; results for text edited during the
 request are discarded. No model, credential, or database migration is needed
 for these editor fixes; deploy the frontend and backend together.
+The numbered-block correction itself changes only the backend; existing
+frontends continue receiving the same `{topics: [{topic, index}]}` response.
 
 ## Groq configuration
 
@@ -136,11 +143,11 @@ server-owned allow-list. Questions and contexts have independent limits.
 Provider structured results are parsed and then validated again with strict
 local Pydantic schemas that reject extra fields, malformed dates, reversed date
 ranges, invalid email addresses, multiline subjects, excessive actions/topics,
-topic anchors absent from the submitted source, and oversized evidence. The
-server derives topic indexes from exact, case-insensitive, or
-whitespace-equivalent anchor matches rather than trusting model arithmetic. A
-malformed structured response gets at most one bounded repair attempt and no
-partial data is saved.
+topic block IDs absent from the submitted source, and oversized evidence. The
+server derives topic indexes from its own source boundaries rather than
+trusting model arithmetic. A malformed structured response gets at most one
+bounded repair attempt with corrective system guidance instead of repeating
+an identical request. No partial data is saved.
 
 Provider-facing JSON Schemas contain only Groq's strict-decoding structural
 subset. Pydantic-only annotations such as string length and pattern constraints
@@ -175,6 +182,11 @@ Logs contain operation, provider, model, prompt version, result category,
 latency, call count, and token counts. They do not contain source text, prompts,
 model responses, API keys, email addresses, access tokens, or raw provider
 errors.
+Validation retries also log `ai_validation schema=... attempt=... reason=...`
+with server-owned categories such as `output_truncated`, `schema_validation`,
+`unknown_topic_block`, or `invalid_json`. An HTTP 200 from Groq means the
+transport succeeded; these categories identify why response checks still
+failed. Public errors remain sanitized.
 
 ## Durable generation idempotency and provenance
 

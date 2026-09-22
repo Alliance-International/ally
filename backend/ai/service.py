@@ -130,21 +130,30 @@ def _split_naturally(text: str, chunk_chars: int, max_chunks: int) -> list[str]:
     return chunks
 
 
-def _find_anchor_index(text: str, anchor: str) -> int | None:
-    """Resolve an AI-provided verbatim anchor to an original source index."""
-    exact = text.find(anchor)
-    if exact >= 0:
-        return exact
-
-    case_insensitive = re.search(re.escape(anchor), text, flags=re.IGNORECASE)
-    if case_insensitive:
-        return case_insensitive.start()
-
-    words = [re.escape(part) for part in re.split(r"\s+", anchor.strip()) if part]
-    if not words:
-        return None
-    whitespace_flexible = re.search(r"\s+".join(words), text, flags=re.IGNORECASE)
-    return whitespace_flexible.start() if whitespace_flexible else None
+def _topic_blocks(text: str) -> tuple[list[dict[str, Any]], list[int]]:
+    """Number source sections without asking a model to reproduce their text."""
+    starts: list[int] = []
+    previous = 0
+    for boundary in re.finditer(r"[\r\n]+|(?<=[.!?])\s+", text):
+        part = text[previous:boundary.start()]
+        if part.strip():
+            starts.append(previous + len(part) - len(part.lstrip()))
+        previous = boundary.end()
+    if text[previous:].strip():
+        starts.append(previous + len(text[previous:]) - len(text[previous:].lstrip()))
+    # Bound metadata overhead for transcripts with thousands of short lines.
+    # Group adjacent sections rather than dropping any source content.
+    if len(starts) > 256:
+        starts = starts[::math.ceil(len(starts) / 256)]
+    blocks = [
+        {"block_id": block_id, "text": text[start:end]}
+        for block_id, (start, end) in enumerate(zip(starts, starts[1:] + [len(text)]))
+    ]
+    indexes = [
+        len(text[:start].encode("utf-16-le", errors="surrogatepass")) // 2
+        for start in starts
+    ]
+    return blocks, indexes
 
 
 def _word_tokens(value: str) -> list[str]:
@@ -283,15 +292,17 @@ class AIService:
         schema_model: Any,
         validator: Callable[[dict[str, Any]], SchemaT],
         max_tokens: int,
+        schema: dict[str, Any] | None = None,
     ) -> tuple[SchemaT, ProviderStructuredResult, int]:
         last_error: Exception | None = None
+        request_messages = list(messages)
         for attempt in range(2):
             try:
                 async with self._semaphore:
                     result = await self.provider.generate_structured(
-                        messages=messages,
+                        messages=request_messages,
                         schema_name=schema_name,
-                        schema=schema_model.model_json_schema(),
+                        schema=schema if schema is not None else schema_model.model_json_schema(),
                         temperature=0.1,
                         max_output_tokens=min(
                             max_tokens, self.settings.ai_max_output_tokens
@@ -302,7 +313,25 @@ class AIService:
                 return validator(result.data), result, attempt + 1
             except (ValidationError, AIMalformedResponseError, ValueError) as error:
                 last_error = error
+                reason = (
+                    "schema_validation" if isinstance(error, ValidationError)
+                    else error.reason if isinstance(error, AIMalformedResponseError)
+                    else "content_validation"
+                )
+                logger.warning(
+                    "ai_validation schema=%s attempt=%d reason=%s",
+                    schema_name, attempt + 1, reason,
+                )
                 if attempt == 0:
+                    # A retry needs corrective guidance; repeating the same
+                    # low-temperature request tends to repeat the same failure.
+                    request_messages = [*messages, AIMessage(
+                        "system",
+                        f"The previous response failed validation ({reason}). "
+                        "Generate a fresh, complete JSON object following the schema and all task rules. "
+                        "Keep text concise and single-line where required. Respect all stated size and count limits. "
+                        "For topic detection, select only the supplied block_id values; do not return source excerpts.",
+                    )]
                     continue
         raise AIMalformedResponseError("structured provider output failed validation") from last_error
 
@@ -510,8 +539,17 @@ class AIService:
         return result.content[:20_000]
 
     async def detect_topics(self, text: str) -> list[TopicSuggestion]:
+        self._check_input(text)
+        blocks, indexes = _topic_blocks(text)
+        if not blocks:
+            return []
+        topic_limit = min(
+            self.settings.ai_max_topics,
+            len(blocks),
+            max(1, (self.settings.ai_max_output_tokens - 512) // 64),
+        )
         payload = json.dumps(
-            {"source": text, "max_topics": self.settings.ai_max_topics},
+            {"blocks": blocks, "max_topics": topic_limit},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -519,18 +557,16 @@ class AIService:
 
         def validate(data: dict[str, Any]) -> list[TopicSuggestion]:
             output = TopicsAIOutput.model_validate(data)
-            if len(output.topics) > self.settings.ai_max_topics:
-                raise ValueError("too many topics")
+            if len(output.topics) > topic_limit:
+                raise AIMalformedResponseError("too many topics", reason="too_many_topics")
 
             candidates: list[TopicSuggestion] = []
             for topic in output.topics:
-                index = _find_anchor_index(text, topic.anchor)
-                if index is None:
-                    raise ValueError("topic anchor does not occur in source")
-                # JavaScript/Quill positions count UTF-16 units, not Python
-                # code points. Emoji before a topic must not shift its label.
-                editor_index = len(text[:index].encode("utf-16-le", errors="surrogatepass")) // 2
-                candidates.append(TopicSuggestion(topic=topic.topic, index=editor_index))
+                if topic.block_id >= len(indexes):
+                    raise AIMalformedResponseError(
+                        "unknown topic block", reason="unknown_topic_block"
+                    )
+                candidates.append(TopicSuggestion(topic=topic.topic, index=indexes[topic.block_id]))
             candidates.sort(key=lambda item: (item.index, item.topic.casefold()))
 
             unique: dict[int, TopicSuggestion] = {}
@@ -538,12 +574,18 @@ class AIService:
                 unique.setdefault(topic.index, topic)
             return list(unique.values())
 
+        schema = TopicsAIOutput.model_json_schema()
+        schema["$defs"]["TopicBlockSuggestion"]["properties"]["block_id"] = {
+            "type": "integer", "enum": list(range(len(blocks))),
+        }
+        schema["properties"]["topics"]["maxItems"] = topic_limit
         topics, _result, _attempts = await self._structured_call(
             [AIMessage("system", TOPICS_SYSTEM), AIMessage("user", payload)],
             schema_name="ally_topics",
             schema_model=TopicsAIOutput,
             validator=validate,
-            max_tokens=min(2_000, self.settings.ai_max_output_tokens),
+            max_tokens=self.settings.ai_max_output_tokens,
+            schema=schema,
         )
         return topics
 
