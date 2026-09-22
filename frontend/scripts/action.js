@@ -168,9 +168,21 @@ async function actionPage() {
     toggle.setAttribute("aria-expanded", "false");
     toggle.setAttribute("aria-controls", `task-menu-${task.id}`);
     toggle.setAttribute("aria-label", `Actions for ${task.title}`);
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chevron.classList.add("action-menu-chevron");
+    chevron.setAttribute("viewBox", "0 0 20 20");
+    chevron.setAttribute("fill", "none");
+    chevron.setAttribute("aria-hidden", "true");
+    const chevronPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    chevronPath.setAttribute("d", "m5 7.5 5 5 5-5");
+    chevronPath.setAttribute("stroke", "currentColor");
+    chevronPath.setAttribute("stroke-width", "1.8");
+    chevronPath.setAttribute("stroke-linecap", "round");
+    chevronPath.setAttribute("stroke-linejoin", "round");
+    chevron.appendChild(chevronPath);
     toggle.append(
       createElement("span", "", "Actions"),
-      createElement("span", "action-menu-chevron", "⌄")
+      chevron
     );
     const menu = createElement("div", "action-menu");
     menu.id = `task-menu-${task.id}`;
@@ -294,8 +306,11 @@ async function actionPage() {
     );
     if (!toggle) return;
     toggle.setAttribute("aria-expanded", "false");
-    toggle.nextElementSibling.hidden = true;
-    toggle.nextElementSibling.classList.remove("open-up");
+    const menu = toggle.nextElementSibling;
+    menu.hidden = true;
+    menu.style.removeProperty("max-height");
+    menu.style.removeProperty("left");
+    menu.style.removeProperty("top");
     toggle.closest("tr")?.classList.remove("menu-open");
     if (restoreFocus) toggle.focus();
   }
@@ -308,12 +323,17 @@ async function actionPage() {
     menu.hidden = false;
     toggle.setAttribute("aria-expanded", "true");
     toggle.closest("tr")?.classList.add("menu-open");
-    const scrollBottom = table.closest("main")?.getBoundingClientRect().bottom;
-    const visibleBottom = Math.min(window.innerHeight, scrollBottom ?? window.innerHeight);
-    const roomBelow = visibleBottom - toggle.getBoundingClientRect().bottom;
-    if (roomBelow < menu.getBoundingClientRect().height + 12) {
-      menu.classList.add("open-up");
-    }
+    const anchor = toggle.getBoundingClientRect();
+    const menuBounds = menu.getBoundingClientRect();
+    const gap = 8;
+    const roomBelow = window.innerHeight - anchor.bottom - gap;
+    const roomAbove = anchor.top - gap;
+    const openAbove = roomBelow < menuBounds.height && roomAbove > roomBelow;
+    const availableHeight = Math.max(64, (openAbove ? roomAbove : roomBelow) - gap);
+    const menuHeight = Math.min(menuBounds.height, availableHeight);
+    menu.style.maxHeight = `${availableHeight}px`;
+    menu.style.left = `${Math.max(gap, Math.min(anchor.right - menuBounds.width, window.innerWidth - menuBounds.width - gap))}px`;
+    menu.style.top = `${openAbove ? anchor.top - menuHeight - gap : anchor.bottom + gap}px`;
   }
 
   function dropdownLink(label, value) {
@@ -610,6 +630,7 @@ async function actionPage() {
     if (event.key === "Escape") closeActionMenu({ restoreFocus: true });
   });
   table.closest("main")?.addEventListener("scroll", () => closeActionMenu());
+  table.parentElement?.addEventListener("scroll", () => closeActionMenu());
   window.addEventListener("resize", () => closeActionMenu());
 
   await loadTasks({ showLoading: true });

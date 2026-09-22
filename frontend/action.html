@@ -246,8 +246,11 @@
 
             <div
               class="action-table-shell"
+              role="region"
+              aria-label="Action items table; scroll horizontally to view all columns on small screens"
+              tabindex="0"
             >
-              <table class="w-full responsive-table action-table">
+              <table class="w-full action-table">
                 <thead class="bg-slate-50">
                   <tr>
                     <th
@@ -282,9 +285,7 @@
                     </th>
                   </tr>
                 </thead>
-                <tbody
-                  id="action-items-tbody"
-                >
+                <tbody id="action-items-tbody">
                   <tr class="table-message-row">
                     <td colspan="6" class="text-center p-8 text-gray-500">
                       Loading action items...
