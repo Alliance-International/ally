@@ -28,6 +28,33 @@ from .exceptions import (
 
 
 MAX_SAFE_RETRY_AFTER_SECONDS = 300
+GROQ_STRICT_SCHEMA_ANNOTATIONS = frozenset(
+    {
+        "default",
+        "examples",
+        "maxLength",
+        "minLength",
+        "pattern",
+        "title",
+    }
+)
+
+
+def _groq_strict_schema(value: Any) -> Any:
+    """Keep only constraints supported reliably by Groq strict decoding.
+
+    Local Pydantic validation remains authoritative for string lengths,
+    patterns, and other application limits after the provider responds.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _groq_strict_schema(item)
+            for key, item in value.items()
+            if key not in GROQ_STRICT_SCHEMA_ANNOTATIONS
+        }
+    if isinstance(value, list):
+        return [_groq_strict_schema(item) for item in value]
+    return value
 
 
 def _retry_after(error: Exception) -> int | None:
@@ -178,7 +205,7 @@ class GroqProvider:
                     "json_schema": {
                         "name": schema_name,
                         "strict": True,
-                        "schema": schema,
+                        "schema": _groq_strict_schema(schema),
                     },
                 },
                 stream=False,

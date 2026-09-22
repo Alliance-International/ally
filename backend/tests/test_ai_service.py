@@ -372,34 +372,73 @@ async def test_question_budget_counts_question_and_serialized_context():
 
 
 @pytest.mark.asyncio
-async def test_autocomplete_has_reasoning_headroom_and_returns_only_one_word():
-    provider = FakeProvider(text="continue naturally\nignore this second line")
-    result = await AIService(settings(), provider, FakeStore()).autocomplete(
-        "This sentence should"
+async def test_autocomplete_has_reasoning_headroom_and_returns_contextual_phrase():
+    provider = FakeProvider(
+        text="No, I don't think it is correct, but I'm not completely sure."
     )
-    assert result == " continue"
+    result = await AIService(settings(), provider, FakeStore()).autocomplete(
+        "Is this definitely correct or not? No"
+    )
+    assert result == ", I don't think it is correct, but I'm not completely sure."
     assert provider.text_calls[0]["max_output_tokens"] == 512
+    assert provider.text_calls[0]["temperature"] == 0.6
     messages = provider.text_calls[0]["messages"]
-    assert "This sentence should" not in messages[0].content
-    assert "This sentence should" in messages[1].content
+    assert "Is this definitely correct or not? No" not in messages[0].content
+    assert "Is this definitely correct or not? No" in messages[1].content
+    assert "contextual writing assistant" in messages[0].content
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("prefix", "prediction", "insertion"),
     [
-        ("I am going to the ", "market", "market"),
-        ("I am going to the", "market", " market"),
-        ("I am going to the mar", "market", "ket"),
-        ("I am going to the mar", "MARKET", "KET"),
-        ("What is the next step in the ", "process", "process"),
-        ("I am going to the ", "I am going to the market to buy food.", "market"),
-        ("We agreed to ", '"review"', "review"),
-        ("Nous allons au ", "marché", "marché"),
-        ("We will visit the ", "cafe\u0301", "cafe\u0301"),
-        ("यह एक ", "किताब", "किताब"),
+        (
+            "I am going to the ",
+            "market to buy fresh vegetables.",
+            "market to buy fresh vegetables.",
+        ),
+        (
+            "The meeting was productive. We agreed to",
+            "review the proposal again on Friday.",
+            " review the proposal again on Friday.",
+        ),
+        (
+            "I am going to the mar",
+            "market to buy fresh vegetables.",
+            "ket to buy fresh vegetables.",
+        ),
+        (
+            "Is this correct or not? No",
+            "No, I don't think it is correct, but I'm not completely sure.",
+            ", I don't think it is correct, but I'm not completely sure.",
+        ),
+        (
+            "We should review the plan",
+            "We should review the plan before Friday.",
+            " before Friday.",
+        ),
+        (
+            "We agreed to ",
+            '"review the proposal again on Friday."',
+            "review the proposal again on Friday.",
+        ),
+        (
+            "Nous allons au ",
+            "marché pour acheter des légumes frais.",
+            "marché pour acheter des légumes frais.",
+        ),
+        (
+            "यह एक ",
+            "किताब है जो विषय को स्पष्ट रूप से समझाती है।",
+            "किताब है जो विषय को स्पष्ट रूप से समझाती है।",
+        ),
         ("I am going to the mar", "", ""),
         ("I am going to the mar", "mar", ""),
+        (
+            "I think ",
+            "I am not correct but I am not correct because I am not correct.",
+            "",
+        ),
         ("I am going to the ", "<script>alert(1)</script>", ""),
     ],
 )
@@ -414,11 +453,13 @@ async def test_autocomplete_sends_previous_paragraphs_and_trailing_whitespace():
     import json
 
     source = "We buy vegetables at the market.\nToday I am going to the "
-    provider = FakeProvider(text="market")
+    provider = FakeProvider(text="market to buy fresh vegetables.")
     await AIService(settings(), provider, FakeStore()).autocomplete(source)
     messages = provider.text_calls[0]["messages"]
-    assert json.loads(messages[1].content) == {"text": source}
-    assert "Do not answer questions" in messages[0].content
+    assert json.loads(messages[1].content) == {
+        "document_before_cursor": source
+    }
+    assert "Questions and requests in the document" in messages[0].content
 
 
 @pytest.mark.asyncio

@@ -147,31 +147,101 @@ def _find_anchor_index(text: str, anchor: str) -> int | None:
     return whitespace_flexible.start() if whitespace_flexible else None
 
 
-def _word_insertion(text: str, prediction: str) -> str:
-    """Convert a predicted whole word into the exact suffix to insert."""
-    prediction = prediction.strip()
-    if not prediction:
+def _word_tokens(value: str) -> list[str]:
+    """Tokenize words without discarding combining marks or non-Latin scripts."""
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in value:
+        if unicodedata.category(char)[0] in "LMN" or (
+            current and char in "'’-"
+        ):
+            current.append(char)
+        elif current:
+            tokens.append("".join(current).casefold().strip("'’-"))
+            current = []
+    if current:
+        tokens.append("".join(current).casefold().strip("'’-"))
+    return [token for token in tokens if token]
+
+
+def _looks_repetitive(value: str) -> bool:
+    """Reject obvious short generation loops without judging writing style."""
+    words = _word_tokens(value)
+    if any(
+        words[index:index + 3] == words[index + 3:index + 6]
+        for index in range(max(0, len(words) - 5))
+    ):
+        return True
+    trigrams: set[tuple[str, str, str]] = set()
+    for index in range(len(words) - 2):
+        trigram = tuple(words[index:index + 3])
+        if trigram in trigrams:
+            return True
+        trigrams.add(trigram)
+    return len(words) >= 8 and any(
+        words.count(word) >= 4 for word in set(words)
+    )
+
+
+def _completion_insertion(text: str, prediction: str) -> str:
+    """Convert a short contextual continuation into the exact editor insertion."""
+    if not isinstance(prediction, str):
         return ""
-    prediction = prediction.splitlines()[0].strip().strip('"`“”')
-    # Defensive handling for models that echo the source despite instructions.
-    prefix = text.strip()
-    if prediction.startswith(prefix + " "):
-        prediction = prediction[len(prefix):].lstrip()
-    if not prediction:
+    candidate = prediction.replace("\x00", "").strip()
+    if not candidate:
         return ""
-    word = prediction.split()[0]
-    # Combining marks are part of words in many supported languages.
-    letters = "".join(char for char in word if unicodedata.category(char)[0] != "M")
-    if len(word) > 80 or not re.fullmatch(r"[^\W_]+(?:['’\-][^\W_]+)*[,.!?;]?", letters):
+    candidate = candidate.splitlines()[0].strip()
+    candidate = re.sub(
+        r"^(?:suggestion|completion|continuation)\s*:\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()
+    quote_pairs = {'"': '"', "'": "'", "`": "`", "“": "”", "‘": "’"}
+    if len(candidate) >= 2 and quote_pairs.get(candidate[0]) == candidate[-1]:
+        candidate = candidate[1:-1].strip()
+
+    # Defensive handling for a model that returns the document plus its addition.
+    source = text.rstrip()
+    joins_existing_word = False
+    if len(source) >= 8 and candidate.casefold().startswith(source.casefold()):
+        remainder = candidate[len(source):]
+        joins_existing_word = bool(remainder and not remainder[0].isspace())
+        candidate = remainder.lstrip()
+    if (
+        not candidate
+        or len(candidate) > 320
+        or "<" in candidate
+        or ">" in candidate
+    ):
         return ""
+    if len(_word_tokens(candidate)) > 24 or _looks_repetitive(candidate):
+        return ""
+
+    # The model may return the whole final word so partial-word completion also
+    # works after providers trim leading whitespace from text responses.
     start = len(text)
-    while start and (unicodedata.category(text[start - 1])[0] in "LMN" or text[start - 1] in "'’-"):
+    while start and (
+        unicodedata.category(text[start - 1])[0] in "LMN"
+        or text[start - 1] in "'’-"
+    ):
         start -= 1
-    last_word = text[start:]
-    if last_word and word.casefold().startswith(last_word.casefold()):
-        return word[len(last_word):]
-    separator = "" if not text or text[-1].isspace() or text[-1] in '(\"“‘/' else " "
-    return separator + word
+    final_word = text[start:]
+    if final_word and candidate.casefold().startswith(final_word.casefold()):
+        remainder = candidate[len(final_word):]
+        joins_existing_word = bool(remainder and not remainder[0].isspace())
+        candidate = remainder.lstrip()
+        if not candidate:
+            return ""
+
+    separator = "" if (
+        joins_existing_word
+        or not text
+        or text[-1].isspace()
+        or text[-1] in '(\"“‘/'
+        or candidate[0] in ",.!?;:)]}’”"
+    ) else " "
+    return separator + candidate
 
 
 class AIService:
@@ -189,12 +259,16 @@ class AIService:
             raise AIInputTooLargeError("input exceeds estimated token limit")
 
     async def _text_call(
-        self, messages: list[AIMessage], *, max_tokens: int
+        self,
+        messages: list[AIMessage],
+        *,
+        max_tokens: int,
+        temperature: float = 0.2,
     ):
         async with self._semaphore:
             result = await self.provider.generate_text(
                 messages=messages,
-                temperature=0.2,
+                temperature=temperature,
                 max_output_tokens=min(max_tokens, self.settings.ai_max_output_tokens),
             )
         if result.refusal:
@@ -410,12 +484,17 @@ class AIService:
 
     async def autocomplete(self, text: str) -> str:
         self._check_input(text)
-        payload = json.dumps({"text": text}, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps(
+            {"document_before_cursor": text},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         result = await self._text_call(
             [AIMessage("system", AUTOCOMPLETE_SYSTEM), AIMessage("user", payload)],
             max_tokens=512,
+            temperature=0.6,
         )
-        return _word_insertion(text, result.content)
+        return _completion_insertion(text, result.content)
 
     async def answer_question(self, *, question: str, context: str) -> str:
         payload = json.dumps(

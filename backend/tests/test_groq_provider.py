@@ -15,7 +15,7 @@ from ai.exceptions import (
     AITimeoutError,
     AITransportError,
 )
-from ai.groq_provider import GroqProvider
+from ai.groq_provider import GroqProvider, _groq_strict_schema
 
 
 class FakeCompletions:
@@ -96,15 +96,68 @@ async def test_successful_strict_structured_request():
     result = await provider(client).generate_structured(
         messages=[AIMessage("system", "rules"), AIMessage("user", "data")],
         schema_name="test",
-        schema={"type": "object", "properties": {}, "additionalProperties": False},
+        schema={
+            "title": "GeneratedByPydantic",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
         temperature=0.1,
         max_output_tokens=100,
     )
     assert result.data == {"value": "ok"}
     call = client.completions.calls[0]
     assert call["response_format"]["json_schema"]["strict"] is True
+    assert "title" not in call["response_format"]["json_schema"]["schema"]
     assert call["reasoning_effort"] == "low"
     assert call["include_reasoning"] is False
+
+
+def test_strict_schema_removes_unsupported_annotations_but_keeps_structure():
+    schema = {
+        "title": "TopicsAIOutput",
+        "type": "object",
+        "properties": {
+            "topics": {
+                "title": "Topics",
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": "safe-locally",
+                        }
+                    },
+                    "required": ["topic"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["topics"],
+        "additionalProperties": False,
+    }
+
+    cleaned = _groq_strict_schema(schema)
+
+    assert cleaned == {
+        "type": "object",
+        "properties": {
+            "topics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"topic": {"type": "string"}},
+                    "required": ["topic"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["topics"],
+        "additionalProperties": False,
+    }
 
 
 @pytest.mark.asyncio

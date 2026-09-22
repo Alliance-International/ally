@@ -24,7 +24,7 @@ Authenticated routes are:
 
 - `POST /generate-result/`: typed generation plus atomic persistence; requires
   a UUID `Idempotency-Key` header;
-- `POST /ai/autocomplete`: next-word prediction with its own tighter
+- `POST /ai/autocomplete`: contextual writing continuation with its own tighter
   distributed limiter;
 - `POST /ai/question`: separate bounded question and context fields;
 - `POST /ai/topics`: validated topics with zero-based UTF-16 source indexes resolved
@@ -39,11 +39,15 @@ and it cannot write AI provenance or AI-generated actions directly.
 ### Editor completion and topic labels
 
 Completion uses up to the last 4,000 characters before the cursor, including
-previous paragraphs and exact trailing whitespace. It predicts one word in the
-author's language; questions in the editor are text to continue, not questions
-to answer. The response's `text` is the exact insertion: `market` after
-`I am going to the `, ` market` after `I am going to the`, or `ket` after
-`I am going to the mar`. Consumers must not trim it or add their own separator.
+previous paragraphs and exact trailing whitespace. It predicts one short,
+context-aware clause or sentence in the author's language, voice, and tense;
+questions in the editor are text to continue, not questions to answer. The
+prompt explicitly rejects restatement and repetitive token loops, while local
+validation rejects oversized, multiline, markup-like, or mechanically repeated
+output. The response's `text` is the exact insertion: `market to buy fresh
+vegetables.` after `I am going to the `, ` review the proposal again on Friday.`
+after `We agreed to`, or `ket to buy fresh vegetables.` after `I am going to the
+mar`. Consumers must not trim it or add their own separator.
 The browser debounces typing, cancels obsolete requests, and rejects late
 responses after a document change, cursor move, selection, blur, or toggle-off.
 Tab, Enter, and clicking the suggestion accept it; Escape dismisses it.
@@ -67,8 +71,11 @@ models. It is used through the official async `groq` Python SDK with no tools,
 browsing, code execution, function calls, Compound model, or custom base URL.
 GPT-OSS calls use low reasoning effort and omit reasoning from responses so
 short product tasks do not exhaust their completion budget before returning
-user-visible content. Autocomplete still receives a bounded 512-token ceiling
-and its displayed result is capped locally.
+user-visible content. Autocomplete uses temperature `0.6`, within Groq's
+recommended range for avoiding repetitive or incoherent reasoning-model
+output, while other deterministic tasks retain their lower temperatures. It
+still receives a bounded 512-token ceiling and its displayed result is capped
+locally to 24 words and 320 characters.
 Review current availability before rollout:
 
 - https://console.groq.com/docs/models
@@ -134,6 +141,12 @@ server derives topic indexes from exact, case-insensitive, or
 whitespace-equivalent anchor matches rather than trusting model arithmetic. A
 malformed structured response gets at most one bounded repair attempt and no
 partial data is saved.
+
+Provider-facing JSON Schemas contain only Groq's strict-decoding structural
+subset. Pydantic-only annotations such as string length and pattern constraints
+are removed before the request and remain enforced by local validation after
+the response. This prevents provider schema rejection without weakening the
+application's output checks.
 
 The provider returns plain text or data, never trusted HTML. Ally constructs
 `formatted_result` locally from escaped summary text. A generated assignee

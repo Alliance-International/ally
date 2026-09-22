@@ -131,6 +131,21 @@ test("completion accepts exactly the returned spacing or partial-word suffix", a
   }
 });
 
+test("completion inserts a contextual multi-word suggestion as one editor change", async () => {
+  const prefix = "The meeting was productive. We agreed to";
+  const h = await completionHarness(prefix + "\n");
+  type(h.controller);
+  const pending = h.ai.tick();
+  h.calls[0].resolve({ text: " review the proposal again on Friday." });
+  await pending;
+  assert.equal(h.visible().text, " review the proposal again on Friday.");
+  assert.equal(h.controller.accept(), true);
+  assert.equal(
+    h.editor.text,
+    "The meeting was productive. We agreed to review the proposal again on Friday.\n"
+  );
+});
+
 test("short input is eligible and debounce sends only the last typing request", async () => {
   const h = await completionHarness("I \n");
   type(h.controller);
