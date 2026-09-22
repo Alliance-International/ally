@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from ai.factory import get_ai_service, get_ai_store
@@ -40,12 +42,14 @@ class FakeService:
         )
 
     async def autocomplete(self, text):
+        self.requests.append(text)
         return "completion"
 
     async def answer_question(self, **kwargs):
         return "answer"
 
     async def detect_topics(self, text):
+        self.requests.append(text)
         return []
 
 
@@ -132,6 +136,49 @@ def test_typed_ai_routes_accept_only_task_fields():
             == 422
         )
         assert client.post("/ai-helper", json={}).status_code == 410
+    finally:
+        uninstall()
+
+
+@pytest.mark.parametrize("endpoint", ["/ai/autocomplete", "/ai/topics"])
+def test_editor_routes_preserve_exact_text_and_reject_blank_input(endpoint):
+    service = install()
+    try:
+        text = "\r\n  🚀 Planning\r\nI am going to the "
+        assert client.post(endpoint, json={"text": text}).status_code == 200
+        assert service.requests == [text]
+        assert client.post(endpoint, json={"text": " \n\t"}).status_code == 422
+    finally:
+        uninstall()
+
+
+def test_autocomplete_accepts_short_prefix_and_bounded_document_context():
+    install()
+    try:
+        assert client.post("/ai/autocomplete", json={"text": "I "}).status_code == 200
+        assert client.post("/ai/autocomplete", json={"text": "x" * 4000}).status_code == 200
+        assert client.post("/ai/autocomplete", json={"text": "x" * 4001}).status_code == 422
+    finally:
+        uninstall()
+
+
+def test_topics_route_accepts_multiline_provider_anchors_end_to_end():
+    from ai.service import AIService
+    from test_ai_service import FakeProvider, settings
+
+    provider = FakeProvider(structured=[{"topics": [
+        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+    ]}])
+    install(AIService(settings(), provider, None))
+    try:
+        source = "\n  🚀 Budget approved.\n\nHiring\nRecruit two engineers.\n"
+        response = client.post("/ai/topics", json={"text": source})
+        assert response.status_code == 200
+        assert response.json() == {"topics": [{
+            "topic": "Hiring",
+            "index": len(source[:source.index("Hiring")].encode("utf-16-le")) // 2,
+        }]}
+        assert len(provider.structured_calls) == 1
     finally:
         uninstall()
 

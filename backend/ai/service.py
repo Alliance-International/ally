@@ -10,6 +10,7 @@ import logging
 import math
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 from uuid import UUID, uuid4
@@ -144,6 +145,33 @@ def _find_anchor_index(text: str, anchor: str) -> int | None:
         return None
     whitespace_flexible = re.search(r"\s+".join(words), text, flags=re.IGNORECASE)
     return whitespace_flexible.start() if whitespace_flexible else None
+
+
+def _word_insertion(text: str, prediction: str) -> str:
+    """Convert a predicted whole word into the exact suffix to insert."""
+    prediction = prediction.strip()
+    if not prediction:
+        return ""
+    prediction = prediction.splitlines()[0].strip().strip('"`“”')
+    # Defensive handling for models that echo the source despite instructions.
+    prefix = text.strip()
+    if prediction.startswith(prefix + " "):
+        prediction = prediction[len(prefix):].lstrip()
+    if not prediction:
+        return ""
+    word = prediction.split()[0]
+    # Combining marks are part of words in many supported languages.
+    letters = "".join(char for char in word if unicodedata.category(char)[0] != "M")
+    if len(word) > 80 or not re.fullmatch(r"[^\W_]+(?:['’\-][^\W_]+)*[,.!?;]?", letters):
+        return ""
+    start = len(text)
+    while start and (unicodedata.category(text[start - 1])[0] in "LMN" or text[start - 1] in "'’-"):
+        start -= 1
+    last_word = text[start:]
+    if last_word and word.casefold().startswith(last_word.casefold()):
+        return word[len(last_word):]
+    separator = "" if not text or text[-1].isspace() or text[-1] in '(\"“‘/' else " "
+    return separator + word
 
 
 class AIService:
@@ -387,7 +415,7 @@ class AIService:
             [AIMessage("system", AUTOCOMPLETE_SYSTEM), AIMessage("user", payload)],
             max_tokens=512,
         )
-        return result.content.splitlines()[0][:500]
+        return _word_insertion(text, result.content)
 
     async def answer_question(self, *, question: str, context: str) -> str:
         payload = json.dumps(
@@ -403,7 +431,11 @@ class AIService:
         return result.content[:20_000]
 
     async def detect_topics(self, text: str) -> list[TopicSuggestion]:
-        payload = json.dumps({"source": text}, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps(
+            {"source": text, "max_topics": self.settings.ai_max_topics},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         self._check_input(payload)
 
         def validate(data: dict[str, Any]) -> list[TopicSuggestion]:
@@ -416,7 +448,10 @@ class AIService:
                 index = _find_anchor_index(text, topic.anchor)
                 if index is None:
                     raise ValueError("topic anchor does not occur in source")
-                candidates.append(TopicSuggestion(topic=topic.topic, index=index))
+                # JavaScript/Quill positions count UTF-16 units, not Python
+                # code points. Emoji before a topic must not shift its label.
+                editor_index = len(text[:index].encode("utf-16-le", errors="surrogatepass")) // 2
+                candidates.append(TopicSuggestion(topic=topic.topic, index=editor_index))
             candidates.sort(key=lambda item: (item.index, item.topic.casefold()))
 
             unique: dict[int, TopicSuggestion] = {}

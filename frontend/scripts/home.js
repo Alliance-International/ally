@@ -1,5 +1,6 @@
 import { initializeApp } from "./appLogic.js";
 import { authenticatedJson } from "./apiClient.js";
+import { createAutocompleteController, insertTopicLabels } from "./editorAI.js";
 import {
   askDocumentQuestion,
   autocompleteText,
@@ -51,6 +52,7 @@ const App = (() => {
   };
 
   let quill, inputQuill, emailQuill;
+  let autocomplete;
   let transcriptionAbortController;
   let mixedMediaRecorder;
   let systemStream, micStreamForSystem;
@@ -231,6 +233,7 @@ const App = (() => {
   }
 
   function toggleCoreUI(shouldBeEnabled) {
+    if (!shouldBeEnabled) autocomplete?.clear();
     if (inputQuill) {
       inputQuill.enable(shouldBeEnabled);
     }
@@ -348,12 +351,14 @@ const App = (() => {
   }
 
   function goToPage(pageNumber) {
+    autocomplete?.clear();
     state.currentPage = pageNumber;
     updateUI();
     saveStateToLocalStorage();
   }
 
   function toggleProcessingControls(isProcessing) {
+    if (isProcessing) autocomplete?.clear();
     if (inputQuill) inputQuill.enable(!isProcessing);
     el.recordBtn.disabled = isProcessing;
     el.recordSystemBtn.disabled = isProcessing;
@@ -489,63 +494,12 @@ const App = (() => {
     }
   }
 
-  let autocompleteTimeout;
-  let autocompleteController;
-
-  function handleAutocomplete(delta, oldDelta, source) {
-    if (source !== "user" || !state.isAutocompleteEnabled) {
-      return;
-    }
-
-    const lastOp = delta.ops[delta.ops.length - 1];
-    if (!lastOp || !lastOp.insert) {
-      hideSuggestions();
-      return;
-    }
-
-    clearTimeout(autocompleteTimeout);
-    autocompleteController?.abort();
-    autocompleteTimeout = setTimeout(async () => {
-      const selection = inputQuill.getSelection();
-
-      if (!selection || selection.length > 0) {
-        hideSuggestions();
-        return;
-      }
-
-      const cursorIndex = selection.index;
-      const textBeforeCursor = inputQuill.getText(0, cursorIndex);
-      const lastLine = textBeforeCursor.trim().split("\n").pop();
-
-      if (lastLine.length < 10 || lastLine.length > 200) {
-        hideSuggestions();
-        return;
-      }
-
-      state.suggestionCursorIndex = cursorIndex;
-
-      autocompleteController = new AbortController();
-      const suggestion = await getSmartCompletion(
-        lastLine,
-        autocompleteController.signal
-      );
-
-      const currentSelection = inputQuill.getSelection();
-      if (!currentSelection || currentSelection.index !== cursorIndex) {
-        hideSuggestions();
-        return;
-      }
-
-      if (suggestion) {
-        state.suggestions = [suggestion];
-        showSuggestions();
-      } else {
-        hideSuggestions();
-      }
-    }, 750);
-  }
-
   function handleSuggestionKeyDown(e) {
+    if (e.isComposing) return;
+    if (e.key === "Escape") {
+      autocomplete.clear();
+      return;
+    }
     if (!state.isSuggestionBoxVisible) return;
 
     if (e.key === "ArrowDown") {
@@ -561,10 +515,8 @@ const App = (() => {
       updateActiveSuggestion();
     } else if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
+      e.stopImmediatePropagation();
       acceptSuggestion(state.activeSuggestionIndex);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      hideSuggestions();
     }
   }
 
@@ -722,16 +674,6 @@ const App = (() => {
     } catch {
     } finally {
       toggleGeneratingControls(false);
-    }
-  }
-
-  async function getSmartCompletion(text, signal) {
-    if (text.trim().length < 10) return null;
-    try {
-      const result = await autocompleteText(text, signal);
-      return result.text.trim().split("\n")[0];
-    } catch (error) {
-      return null;
     }
   }
 
@@ -940,6 +882,19 @@ const App = (() => {
     });
     const inputToolbar = inputQuill.getModule("toolbar").container;
     inputEditorWrapper.prepend(inputToolbar);
+    autocomplete = createAutocompleteController({
+      editor: inputQuill,
+      request: autocompleteText,
+      onSuggestion: ({ text, index }) => {
+        state.suggestions = [text];
+        state.suggestionCursorIndex = index;
+        showSuggestions();
+      },
+      onClear: hideSuggestions,
+    });
+    inputQuill.on("selection-change", autocomplete.selectionChanged);
+    inputQuill.root.addEventListener("compositionstart", autocomplete.compositionStarted);
+    inputQuill.root.addEventListener("compositionend", autocomplete.compositionEnded);
     inputQuill.on("text-change", (delta, oldDelta, source) => {
       if (source === "user") {
         state.sourceText = sanitizeRichHtml(inputQuill.root.innerHTML);
@@ -955,7 +910,7 @@ const App = (() => {
         saveStateToLocalStorage();
       }
 
-      handleAutocomplete(delta, oldDelta, source);
+      autocomplete.textChanged(delta, oldDelta, source);
     });
 
     emailQuill = new Quill("#email-quill-editor", {
@@ -998,7 +953,7 @@ const App = (() => {
       el.alertContainer.innerHTML = "";
       el.autocompleteToggle.checked = false;
       state.isAutocompleteEnabled = false;
-      hideSuggestions();
+      autocomplete.setEnabled(false);
       goToPage(1);
       saveStateToLocalStorage();
     });
@@ -1023,11 +978,7 @@ const App = (() => {
 
     el.autocompleteToggle.addEventListener("change", (e) => {
       state.isAutocompleteEnabled = e.target.checked;
-      if (!state.isAutocompleteEnabled) {
-        clearTimeout(autocompleteTimeout);
-        autocompleteController?.abort();
-        hideSuggestions();
-      }
+      autocomplete.setEnabled(state.isAutocompleteEnabled);
     });
     el.detectTopicsBtn.addEventListener("click", handleDetectTopics);
     el.qaAskBtn.addEventListener("click", () => handleAskQuestion("summary"));
@@ -1110,7 +1061,7 @@ const App = (() => {
       }
     });
 
-    inputQuill.root.addEventListener("keydown", handleSuggestionKeyDown);
+    inputQuill.root.addEventListener("keydown", handleSuggestionKeyDown, true);
   }
 
   function initResize(e) {
@@ -1476,9 +1427,12 @@ const App = (() => {
     });
     state.activeSuggestionIndex = 0;
     updateActiveSuggestion();
-    el.suggestionBox.style.left = `${bounds.left}px`;
-    el.suggestionBox.style.top = `${bounds.bottom + 5}px`;
+    const editorRect = inputQuill.container.getBoundingClientRect();
+    const wrapperRect = el.suggestionBox.parentElement.getBoundingClientRect();
     el.suggestionBox.style.display = "block";
+    const left = bounds.left + editorRect.left - wrapperRect.left;
+    el.suggestionBox.style.left = `${Math.max(0, Math.min(left, wrapperRect.width - el.suggestionBox.offsetWidth))}px`;
+    el.suggestionBox.style.top = `${bounds.bottom + editorRect.top - wrapperRect.top + 5}px`;
     state.isSuggestionBoxVisible = true;
   }
 
@@ -1499,20 +1453,7 @@ const App = (() => {
 
   function acceptSuggestion(index) {
     if (index < 0 || index >= state.suggestions.length) return;
-
-    const selection = inputQuill.getSelection();
-    if (!selection) return;
-
-    const suggestion = state.suggestions[index];
-
-    const textBefore = inputQuill.getText(selection.index - 1, 1);
-    const space = textBefore && !/\s$/.test(textBefore) ? " " : "";
-
-    inputQuill.insertText(selection.index, space + suggestion, "user");
-
-    inputQuill.setSelection(selection.index + space.length + suggestion.length);
-
-    hideSuggestions();
+    autocomplete.accept();
   }
 
   async function handleDetectTopics() {
@@ -1529,30 +1470,21 @@ const App = (() => {
       return;
     }
     el.detectTopicsBtn.disabled = true;
+    autocomplete.clear();
     el.detectTopicsBtn.innerHTML =
       '<div class="h-5 w-5 border-t-2 border-white rounded-full animate-spin mx-auto"></div>';
     try {
       const topics = await detectTopics(sourceText);
-      if (topics && topics.length > 0) {
-        topics
-          .sort((a, b) => b.index - a.index)
-          .forEach((topic) => {
-            const validIndex = findValidInsertionPoint(
-              inputQuill.getText(),
-              topic.index
-            );
-            const heading = (validIndex > 0 ? "\n" : "") + `${topic.topic}\n`;
-            inputQuill.insertText(validIndex, heading, "api");
-            inputQuill.formatText(
-              validIndex + (validIndex > 0 ? 1 : 0),
-              topic.topic.length,
-              { bold: true },
-              "api"
-            );
-          });
+      if (inputQuill.getText() !== sourceText) {
+        showAlert("The text changed while topics were being detected. Please try again.", "info");
+        return;
+      }
+      if (insertTopicLabels(inputQuill, topics, Quill.import("delta")) > 0) {
+        autocomplete.clear();
         state.sourceText = sanitizeRichHtml(inputQuill.root.innerHTML);
         state.isStructured = true;
         updateUI();
+        saveStateToLocalStorage();
         showAlert("Topics detected and labeled in the text.", "success");
       } else {
         showAlert("No distinct topics were detected.", "info");
@@ -1566,24 +1498,6 @@ const App = (() => {
       el.detectTopicsBtn.disabled = false;
       el.detectTopicsBtn.textContent = "Detect & Label Topics";
     }
-  }
-
-  function findValidInsertionPoint(text, idealIndex) {
-    if (idealIndex === 0) return 0;
-    if (text[idealIndex] === "\n") return idealIndex;
-    const precedingChar = text[idealIndex - 1];
-    if (
-      precedingChar === "\n" ||
-      (precedingChar === " " && [".", "?", "!"].includes(text[idealIndex - 2]))
-    ) {
-      return idealIndex;
-    }
-    for (let i = idealIndex - 1; i >= 0; i--) {
-      if (text[i] === "\n") return i + 1;
-      if ([".", "?", "!"].includes(text[i]) && text[i + 1] === " ")
-        return i + 2;
-    }
-    return 0;
   }
 
   async function handleAskQuestion(source = "summary") {

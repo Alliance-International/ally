@@ -24,10 +24,10 @@ Authenticated routes are:
 
 - `POST /generate-result/`: typed generation plus atomic persistence; requires
   a UUID `Idempotency-Key` header;
-- `POST /ai/autocomplete`: short plain-text continuation with its own tighter
+- `POST /ai/autocomplete`: next-word prediction with its own tighter
   distributed limiter;
 - `POST /ai/question`: separate bounded question and context fields;
-- `POST /ai/topics`: validated topics with zero-based source indexes resolved
+- `POST /ai/topics`: validated topics with zero-based UTF-16 source indexes resolved
   locally from provider-returned verbatim source anchors;
 - `POST /action-items/{id}/review`: owner-scoped confirm or reject, with the
   complete reviewed action fields.
@@ -35,6 +35,28 @@ Authenticated routes are:
 The generic `POST /ai-helper` route is retired with `410`. The browser cannot
 choose a provider, model, system prompt, tools, temperature, or output format,
 and it cannot write AI provenance or AI-generated actions directly.
+
+### Editor completion and topic labels
+
+Completion uses up to the last 4,000 characters before the cursor, including
+previous paragraphs and exact trailing whitespace. It predicts one word in the
+author's language; questions in the editor are text to continue, not questions
+to answer. The response's `text` is the exact insertion: `market` after
+`I am going to the `, ` market` after `I am going to the`, or `ket` after
+`I am going to the mar`. Consumers must not trim it or add their own separator.
+The browser debounces typing, cancels obsolete requests, and rejects late
+responses after a document change, cursor move, selection, blur, or toggle-off.
+Tab, Enter, and clicking the suggestion accept it; Escape dismisses it.
+
+Topic requests preserve the original whitespace and line endings. Provider
+anchors may span multiple lines, while topic titles remain single-line plain
+text. Previously, applying the title's single-line validation to anchors could
+reject valid provider output twice and return HTTP 502. Source matching still
+rejects invented anchors. Index conversion counts emoji as UTF-16 units for the
+browser, and insertion accounts for Quill embeds omitted from plain text.
+Labels are applied as one undoable edit; results for text edited during the
+request are discarded. No model, credential, or database migration is needed
+for these editor fixes; deploy the frontend and backend together.
 
 ## Groq configuration
 
@@ -212,6 +234,11 @@ sanitized error mapping, and run the same fake-provider conformance tests. Do
 not add an implicit fallback.
 
 Verification from `ally/`:
+
+When a local `.env` contains real deployment settings, run the unit tests with
+`PYTHON_DOTENV_DISABLED=1` in the test process. Otherwise the existing reminder
+tests inherit signing keys and origins instead of their expected test defaults.
+This does not require changing or removing the local `.env`.
 
 ```powershell
 npm test

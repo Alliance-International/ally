@@ -372,16 +372,86 @@ async def test_question_budget_counts_question_and_serialized_context():
 
 
 @pytest.mark.asyncio
-async def test_autocomplete_has_reasoning_headroom_and_returns_one_safe_line():
+async def test_autocomplete_has_reasoning_headroom_and_returns_only_one_word():
     provider = FakeProvider(text="continue naturally\nignore this second line")
     result = await AIService(settings(), provider, FakeStore()).autocomplete(
         "This sentence should"
     )
-    assert result == "continue naturally"
+    assert result == " continue"
     assert provider.text_calls[0]["max_output_tokens"] == 512
     messages = provider.text_calls[0]["messages"]
     assert "This sentence should" not in messages[0].content
     assert "This sentence should" in messages[1].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prefix", "prediction", "insertion"),
+    [
+        ("I am going to the ", "market", "market"),
+        ("I am going to the", "market", " market"),
+        ("I am going to the mar", "market", "ket"),
+        ("I am going to the mar", "MARKET", "KET"),
+        ("What is the next step in the ", "process", "process"),
+        ("I am going to the ", "I am going to the market to buy food.", "market"),
+        ("We agreed to ", '"review"', "review"),
+        ("Nous allons au ", "marché", "marché"),
+        ("We will visit the ", "cafe\u0301", "cafe\u0301"),
+        ("यह एक ", "किताब", "किताब"),
+        ("I am going to the mar", "", ""),
+        ("I am going to the mar", "mar", ""),
+        ("I am going to the ", "<script>alert(1)</script>", ""),
+    ],
+)
+async def test_autocomplete_returns_exact_insertion(prefix, prediction, insertion):
+    provider = FakeProvider(text=prediction)
+    result = await AIService(settings(), provider, FakeStore()).autocomplete(prefix)
+    assert result == insertion
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_sends_previous_paragraphs_and_trailing_whitespace():
+    import json
+
+    source = "We buy vegetables at the market.\nToday I am going to the "
+    provider = FakeProvider(text="market")
+    await AIService(settings(), provider, FakeStore()).autocomplete(source)
+    messages = provider.text_calls[0]["messages"]
+    assert json.loads(messages[1].content) == {"text": source}
+    assert "Do not answer questions" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_topic_multiline_anchors_no_longer_fail_validation():
+    source = "\n  Budget\nApproved spending for October.\n\nHiring\nRecruit two engineers.\n"
+    provider = FakeProvider(structured=[{"topics": [
+        {"topic": "Budget", "anchor": "Budget\nApproved spending for October."},
+        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+    ]}])
+    result = await AIService(settings(), provider, FakeStore()).detect_topics(source)
+    assert [(topic.topic, topic.index) for topic in result] == [
+        ("Budget", source.index("Budget")), ("Hiring", source.index("Hiring")),
+    ]
+    assert len(provider.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_topic_offsets_preserve_crlf_leading_spaces_and_javascript_unicode_units():
+    source = "\r\n  🚀 Launch approved.\r\n\r\nHiring\r\nRecruit two engineers.\r\n"
+    provider = FakeProvider(structured=[{"topics": [
+        {"topic": "Hiring", "anchor": "Hiring\nRecruit two engineers."},
+    ]}])
+    result = await AIService(settings(), provider, FakeStore()).detect_topics(source)
+    assert result[0].index == len(source[:source.index("Hiring")].encode("utf-16-le")) // 2
+
+
+@pytest.mark.asyncio
+async def test_topic_titles_still_reject_html_and_newlines():
+    for title in ["<b>Budget</b>", "Budget\nInjected", "   "]:
+        output = {"topics": [{"topic": title, "anchor": "Budget"}]}
+        provider = FakeProvider(structured=[output, output])
+        with pytest.raises(AIMalformedResponseError):
+            await AIService(settings(), provider, FakeStore()).detect_topics("Budget")
 
 
 @pytest.mark.asyncio

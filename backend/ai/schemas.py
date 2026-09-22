@@ -32,6 +32,16 @@ def normalize_text(value: str, *, allow_newlines: bool = True) -> str:
     return value.strip()
 
 
+def validate_editor_text(value: str) -> str:
+    # Whitespace is significant: it identifies word boundaries for completion
+    # and source offsets for topic labels (including CRLF and leading blanks).
+    if CONTROL_PATTERN.search(value):
+        raise ValueError("control characters are not allowed")
+    if not value.strip():
+        raise ValueError("text is required")
+    return value
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
@@ -76,12 +86,12 @@ class MeetingGenerationRequest(StrictModel):
 
 
 class AutocompleteRequest(StrictModel):
-    text: str = Field(min_length=10, max_length=500)
+    text: str = Field(min_length=1, max_length=4_000)
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
-        return normalize_text(value)
+        return validate_editor_text(value)
 
 
 class QuestionRequest(StrictModel):
@@ -103,10 +113,7 @@ class TopicsRequest(StrictModel):
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
-        value = normalize_text(value)
-        if not value:
-            raise ValueError("text is required")
-        return value
+        return validate_editor_text(value)
 
 
 class ReviewActionRequest(StrictModel):
@@ -218,13 +225,22 @@ class TopicAnchorSuggestion(StrictModel):
     topic: str = Field(min_length=1, max_length=200)
     anchor: str = Field(min_length=1, max_length=200)
 
-    @field_validator("topic", "anchor")
+    @field_validator("topic")
     @classmethod
     def validate_plain_text(cls, value: str) -> str:
         value = normalize_text(value, allow_newlines=False)
         if HTML_PATTERN.search(value):
             raise ValueError("HTML is not allowed")
+        if not value:
+            raise ValueError("topic is required")
         return value
+
+    @field_validator("anchor")
+    @classmethod
+    def validate_anchor(cls, value: str) -> str:
+        # An anchor is a source excerpt, not a title. Multiline excerpts are
+        # valid and are only matched against source text, never rendered.
+        return validate_editor_text(value).strip()
 
 
 class TopicsAIOutput(StrictModel):
