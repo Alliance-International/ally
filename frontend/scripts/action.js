@@ -45,6 +45,8 @@ async function actionPage() {
     clearFilters: document.getElementById("clear-filters-btn"),
     assigneeDropdown: document.getElementById("assignee-dropdown"),
     statusDropdown: document.getElementById("status-dropdown"),
+    tableShell: document.getElementById("action-table-shell"),
+    scrollHint: document.getElementById("table-scroll-hint"),
   };
   if (Object.values(elements).some((element) => !element)) return;
 
@@ -55,6 +57,13 @@ async function actionPage() {
   let loadSequence = 0;
 
   const table = elements.tableBody.closest("table");
+  function updateScrollHint() {
+    const shell = elements.tableShell;
+    const canScrollRight =
+      shell.scrollWidth - shell.clientWidth > 8 &&
+      shell.scrollLeft + shell.clientWidth < shell.scrollWidth - 8;
+    elements.scrollHint.hidden = !canScrollRight;
+  }
   const notice = createElement(
     "div",
     "mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900",
@@ -70,6 +79,7 @@ async function actionPage() {
   table?.parentElement?.insertAdjacentElement("beforebegin", notice);
 
   function showTableMessage(message, className = "text-gray-500") {
+    elements.scrollHint.hidden = true;
     const row = document.createElement("tr");
     row.className = "table-message-row";
     const cell = createElement("td", `p-8 text-center ${className}`, message);
@@ -298,6 +308,7 @@ async function actionPage() {
       return;
     }
     elements.tableBody.replaceChildren(...visible.map(taskRow));
+    window.requestAnimationFrame(updateScrollHint);
   }
 
   function closeActionMenu({ restoreFocus = false } = {}) {
@@ -630,8 +641,20 @@ async function actionPage() {
     if (event.key === "Escape") closeActionMenu({ restoreFocus: true });
   });
   table.closest("main")?.addEventListener("scroll", () => closeActionMenu());
-  table.parentElement?.addEventListener("scroll", () => closeActionMenu());
-  window.addEventListener("resize", () => closeActionMenu());
+  window.addEventListener("scroll", () => closeActionMenu(), { passive: true });
+  elements.tableShell.addEventListener(
+    "scroll",
+    () => {
+      closeActionMenu();
+      updateScrollHint();
+    },
+    { passive: true }
+  );
+  window.addEventListener("resize", () => {
+    closeActionMenu();
+    updateScrollHint();
+  });
+  updateScrollHint();
 
   await loadTasks({ showLoading: true });
   try {

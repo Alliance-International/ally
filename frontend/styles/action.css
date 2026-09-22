@@ -44,10 +44,31 @@ main::-webkit-scrollbar-thumb:hover {
 .action-table-shell {
   width: 100%;
   overflow-x: auto;
-  overscroll-behavior-x: contain;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid #cedbe8;
   border-radius: 0.75rem;
   background: #fff;
+}
+
+.table-scroll-hint {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  color: #475f85;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.table-scroll-hint[hidden] {
+  display: none;
+}
+
+.table-scroll-hint svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .action-table-shell:focus-visible {
@@ -201,5 +222,24 @@ main::-webkit-scrollbar-thumb:hover {
   .action-table th,
   .action-table td {
     padding: 0.75rem;
+  }
+}
+
+@media (max-width: 1023px) {
+  body .action-layout {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .action-layout .action-content {
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .action-layout .action-main {
+    min-width: 0;
+    overflow: visible;
   }
 }

@@ -31,7 +31,7 @@
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   </head>
   <body class="bg-slate-50 text-slate-800">
-    <div class="flex h-screen overflow-hidden">
+    <div class="action-layout flex h-screen overflow-hidden">
       <aside
         id="mobile-menu"
         class="fixed lg:relative inset-y-0 left-0 transform -translate-x-full lg:translate-x-0 z-30 lg:z-auto w-72 lg:w-80 bg-slate-50 border-r border-slate-200 flex flex-col h-full lg:min-h-0 h-dvh overflow-y-auto"
@@ -130,7 +130,7 @@
         class="fixed inset-0 bg-black bg-opacity-50 z-20 hidden lg:hidden"
       ></div>
 
-      <div class="flex-1 flex flex-col overflow-hidden">
+      <div class="action-content flex-1 flex flex-col overflow-hidden">
         <header
           class="lg:hidden flex items-center justify-between p-4 bg-slate-100 border-b border-slate-200 sticky top-0 z-10"
         >
@@ -148,7 +148,7 @@
         </header>
 
         <main
-          class="flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 lg:p-8"
+          class="action-main flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 lg:p-8"
         >
           <div class="max-w-7xl mx-auto">
             <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
@@ -244,7 +244,15 @@
               </button>
             </div>
 
+            <div id="table-scroll-hint" class="table-scroll-hint" hidden aria-hidden="true">
+              <span>Scroll to see more</span>
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M3.5 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+
             <div
+              id="action-table-shell"
               class="action-table-shell"
               role="region"
               aria-label="Action items table; scroll horizontally to view all columns on small screens"
