@@ -562,6 +562,22 @@ test("meeting generation reuses uncertain keys and creates a new key after succe
   assert.equal(JSON.stringify(calls).includes("model"), false);
 });
 
+test("topic requests carry existing heading positions without provider controls", async () => {
+  const calls = [];
+  const namespace = await loadScript("aiClient.js", createContext(), {
+    "./apiClient.js": {
+      async authenticatedJson(path, options) {
+        calls.push({ path, options });
+        return { topics: [] };
+      },
+    },
+  });
+  const text = "Intro.\nExisting heading\nBody.\n";
+  await namespace.detectDocumentTopics(text, [7]);
+  assert.equal(calls[0].path, "/ai/topics");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { text, heading_indexes: [7] });
+});
+
 class FakeElement {
   constructor() {
     this.children = [];

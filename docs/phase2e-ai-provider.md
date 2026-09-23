@@ -69,6 +69,21 @@ for these editor fixes; deploy the frontend and backend together.
 The numbered-block correction itself changes only the backend; existing
 frontends continue receiving the same `{topics: [{topic, index}]}` response.
 
+Topic detection preserves existing headings. The browser sends optional
+`heading_indexes` for rich-text headings and short fully bold title lines;
+the API validates these as bounded UTF-16 source line positions. Both layers
+also recognize obvious standalone plain-text and Markdown titles. A title
+and its following paragraph group are excluded from insertion; a blank line
+after body text can start an untitled candidate section. The model is also
+instructed to skip later paragraphs that continue an already titled topic.
+Only eligible block IDs appear in the provider schema, and local validation
+filters protected positions even if the provider disregards that constraint.
+The editor rechecks headings before insertion, including labels saved and
+reloaded from earlier runs. Fully titled input needs no provider call. Requests
+retain authentication and distributed rate limits, and heading metadata can
+only remove eligible positions, never grant new ones. Deploy the backend
+before or together with the frontend for this request-field addition.
+
 ## Groq configuration
 
 The selected production configuration is `openai/gpt-oss-20b` for both

@@ -47,6 +47,7 @@ from .schemas import (
     TopicSuggestion,
     TopicsAIOutput,
 )
+from .topic_guard import labelled_ranges
 
 
 logger = logging.getLogger(__name__)
@@ -538,18 +539,25 @@ class AIService:
         )
         return result.content[:20_000]
 
-    async def detect_topics(self, text: str) -> list[TopicSuggestion]:
+    async def detect_topics(
+        self, text: str, *, heading_indexes: list[int] | None = None
+    ) -> list[TopicSuggestion]:
         self._check_input(text)
         blocks, indexes = _topic_blocks(text)
-        if not blocks:
+        covered = labelled_ranges(text, heading_indexes or [])
+        eligible = [
+            block_id for block_id, index in enumerate(indexes)
+            if not any(start <= index < end for start, end in covered)
+        ]
+        if not eligible:
             return []
         topic_limit = min(
             self.settings.ai_max_topics,
-            len(blocks),
+            len(eligible),
             max(1, (self.settings.ai_max_output_tokens - 512) // 64),
         )
         payload = json.dumps(
-            {"blocks": blocks, "max_topics": topic_limit},
+            {"blocks": blocks, "eligible_block_ids": eligible, "max_topics": topic_limit},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -566,6 +574,10 @@ class AIService:
                     raise AIMalformedResponseError(
                         "unknown topic block", reason="unknown_topic_block"
                     )
+                # Model output cannot override existing labels, even when the
+                # source contains instructions to insert duplicate headings.
+                if topic.block_id not in eligible:
+                    continue
                 candidates.append(TopicSuggestion(topic=topic.topic, index=indexes[topic.block_id]))
             candidates.sort(key=lambda item: (item.index, item.topic.casefold()))
 
@@ -576,7 +588,7 @@ class AIService:
 
         schema = TopicsAIOutput.model_json_schema()
         schema["$defs"]["TopicBlockSuggestion"]["properties"]["block_id"] = {
-            "type": "integer", "enum": list(range(len(blocks))),
+            "type": "integer", "enum": eligible,
         }
         schema["properties"]["topics"]["maxItems"] = topic_limit
         topics, _result, _attempts = await self._structured_call(

@@ -1,6 +1,8 @@
 import { initializeApp } from "./appLogic.js";
 import { authenticatedJson } from "./apiClient.js";
-import { createAutocompleteController, insertTopicLabels } from "./editorAI.js";
+import {
+  createAutocompleteController, hasUntitledTopicSections, insertTopicLabels, topicHeadingIndexes,
+} from "./editorAI.js";
 import {
   askDocumentQuestion,
   autocompleteText,
@@ -677,8 +679,8 @@ const App = (() => {
     }
   }
 
-  async function detectTopics(text) {
-    const parsedJson = await detectDocumentTopics(text);
+  async function detectTopics(text, headingIndexes) {
+    const parsedJson = await detectDocumentTopics(text, headingIndexes);
     return parsedJson.topics
       .filter((t) => typeof t.index === "number" && t.index >= 0)
       .sort((a, b) => a.index - b.index);
@@ -1457,6 +1459,7 @@ const App = (() => {
   }
 
   async function handleDetectTopics() {
+    if (el.detectTopicsBtn.disabled) return;
     if (state.isStructured) {
       showAlert(
         "Topics have already been arranged. Please edit the text to re-enable.",
@@ -1469,14 +1472,20 @@ const App = (() => {
       showAlert("Please provide some text first.", "info");
       return;
     }
+    if (!hasUntitledTopicSections(inputQuill)) {
+      showAlert("These sections already have headings. No new labels are needed.", "info");
+      return;
+    }
+    const sourceContents = JSON.stringify(inputQuill.getContents().ops);
+    const headingIndexes = topicHeadingIndexes(inputQuill);
     el.detectTopicsBtn.disabled = true;
     autocomplete.clear();
     el.detectTopicsBtn.innerHTML =
       '<div class="h-5 w-5 border-t-2 border-white rounded-full animate-spin mx-auto"></div>';
     try {
-      const topics = await detectTopics(sourceText);
-      if (inputQuill.getText() !== sourceText) {
-        showAlert("The text changed while topics were being detected. Please try again.", "info");
+      const topics = await detectTopics(sourceText, headingIndexes);
+      if (JSON.stringify(inputQuill.getContents().ops) !== sourceContents) {
+        showAlert("The document changed while topics were being detected. Please try again.", "info");
         return;
       }
       if (insertTopicLabels(inputQuill, topics, Quill.import("delta")) > 0) {
@@ -1487,7 +1496,7 @@ const App = (() => {
         saveStateToLocalStorage();
         showAlert("Topics detected and labeled in the text.", "success");
       } else {
-        showAlert("No distinct topics were detected.", "info");
+        showAlert("No new topic labels are needed. Existing headings were kept.", "info");
       }
     } catch (error) {
       showAlert(

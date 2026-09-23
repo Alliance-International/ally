@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
@@ -109,11 +109,28 @@ class QuestionRequest(StrictModel):
 
 class TopicsRequest(StrictModel):
     text: str = Field(min_length=1, max_length=150_000)
+    heading_indexes: list[Annotated[int, Field(ge=0, strict=True)]] = Field(
+        default_factory=list, max_length=2000
+    )
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, value: str) -> str:
         return validate_editor_text(value)
+
+    @model_validator(mode="after")
+    def validate_heading_indexes(self):
+        # Positions describe existing rich-text lines, never new instructions.
+        starts = set()
+        offset = 0
+        for line in self.text.splitlines(keepends=True):
+            if line.strip():
+                starts.add(offset)
+            offset += len(line.encode("utf-16-le", errors="surrogatepass")) // 2
+        if any(index not in starts for index in self.heading_indexes):
+            raise ValueError("heading indexes must identify nonempty source line starts")
+        self.heading_indexes = sorted(set(self.heading_indexes))
+        return self
 
 
 class ReviewActionRequest(StrictModel):

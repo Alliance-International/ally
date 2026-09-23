@@ -48,8 +48,9 @@ class FakeService:
     async def answer_question(self, **kwargs):
         return "answer"
 
-    async def detect_topics(self, text):
+    async def detect_topics(self, text, *, heading_indexes=None):
         self.requests.append(text)
+        self.heading_indexes = heading_indexes
         return []
 
 
@@ -171,7 +172,7 @@ def test_topics_route_maps_numbered_multiline_sections_end_to_end():
     ]}])
     install(AIService(settings(), provider, None))
     try:
-        source = "\n  🚀 Budget approved.\n\nHiring\nRecruit two engineers.\n"
+        source = "\n  🚀 Budget approved.\n\nHiring starts now.\nRecruit two engineers.\n"
         response = client.post("/ai/topics", json={"text": source})
         assert response.status_code == 200
         assert response.json() == {"topics": [{
@@ -179,6 +180,29 @@ def test_topics_route_maps_numbered_multiline_sections_end_to_end():
             "index": len(source[:source.index("Hiring")].encode("utf-16-le")) // 2,
         }]}
         assert len(provider.structured_calls) == 1
+    finally:
+        uninstall()
+
+
+def test_topic_route_preserves_formatted_heading_positions():
+    service = install()
+    try:
+        text = "🚀 Opening notes.\nexisting title\nBody text.\n"
+        index = len(text[:text.index("existing title")].encode("utf-16-le")) // 2
+        response = client.post("/ai/topics", json={"text": text, "heading_indexes": [index]})
+        assert response.status_code == 200
+        assert service.heading_indexes == [index]
+    finally:
+        uninstall()
+
+
+@pytest.mark.parametrize("indexes", [[-1], [1], [99], [True], ["0"], [0.5], [0] * 2001])
+def test_topic_route_rejects_invalid_heading_metadata(indexes):
+    service = install()
+    try:
+        response = client.post("/ai/topics", json={"text": "Body text.\n", "heading_indexes": indexes})
+        assert response.status_code == 422
+        assert not service.requests
     finally:
         uninstall()
 

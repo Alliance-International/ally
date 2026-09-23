@@ -258,3 +258,74 @@ test("topics sharing an insertion boundary are deduplicated and bad indexes are 
   assert.equal(count, 1);
   assert.equal(editor.text, "First\nFirst paragraph here.\nSecond paragraph.\n");
 });
+
+test("repeated detection cannot add renamed labels at headings or inside their body after reload", async () => {
+  const { insertTopicLabels, hasUntitledTopicSections } = await loadEditorAI();
+  const editor = editorFor("We approved spending.\nHiring starts Monday.\n");
+  assert.equal(insertTopicLabels(editor, [{ topic: "Project update", index: 0 }], Delta), 1);
+  const reloaded = editorFor(editor.text, editor.getContents().ops);
+  assert.equal(hasUntitledTopicSections(reloaded), false);
+  assert.equal(insertTopicLabels(reloaded, [
+    { topic: "Another update", index: 0 },
+    { topic: "Different label", index: reloaded.text.indexOf("We approved") },
+    { topic: "Hiring duplicate", index: reloaded.text.indexOf("Hiring") },
+  ], Delta), 0);
+  assert.equal(reloaded.text, editor.text);
+  assert.equal(reloaded.updated, undefined);
+});
+
+test("plain-text headings protect their body while untitled sections can still be labelled", async () => {
+  const { insertTopicLabels, hasUntitledTopicSections } = await loadEditorAI();
+  for (const heading of ["TECHNICAL SKILLS", "Technical skills", "# Technical skills", "**Technical skills**", "2. Technical skills", "Skills:"]) {
+    const text = `${heading}\n\nWe build APIs.\n\nA separate section needs a heading.\n`;
+    const editor = editorFor(text);
+    assert.equal(hasUntitledTopicSections(editor), true);
+    assert.equal(insertTopicLabels(editor, [
+      { topic: "Duplicate", index: 0 },
+      { topic: "Inside body", index: text.indexOf("We build") },
+      { topic: "New section", index: text.indexOf("A separate") },
+    ], Delta), 1);
+    assert.equal(editor.text, text.replace("A separate", "New section\nA separate"));
+  }
+});
+
+test("formatted headings use plain-text UTF-16 offsets even with an earlier embed", async () => {
+  const { topicHeadingIndexes, insertTopicLabels } = await loadEditorAI();
+  const text = "🚀 Intro text.\nexisting title\nKeep this body.\n\nNew section starts here.\n";
+  for (const heading of [
+    [{ insert: "existing title", attributes: { bold: true } }, { insert: "\n" }],
+    [{ insert: "existing title" }, { insert: "\n", attributes: { header: 2 } }],
+  ]) {
+    const editor = editorFor(text, [
+      { insert: "🚀 Intro text." }, { insert: { image: "example" } }, { insert: "\n" },
+      ...heading, { insert: "Keep this body.\n\nNew section starts here.\n" },
+    ]);
+    assert.deepEqual([...topicHeadingIndexes(editor)], [text.indexOf("existing title")]);
+    assert.equal(insertTopicLabels(editor, [
+      { topic: "Duplicate", index: text.indexOf("existing title") },
+      { topic: "Nested duplicate", index: text.indexOf("Keep this") },
+      { topic: "New", index: text.indexOf("New section") },
+    ], Delta), 1);
+    assert.equal(editor.text, text.replace("New section", "New\nNew section"));
+  }
+});
+
+test("malformed labels cannot inject markup or multiline headings into untitled text", async () => {
+  const { insertTopicLabels } = await loadEditorAI();
+  const editor = editorFor("This section has no heading.\n");
+  assert.equal(insertTopicLabels(editor, [
+    { topic: "<b>Injected</b>", index: 0 },
+    { topic: "Injected\nheading", index: 0 },
+    { topic: "x".repeat(201), index: 0 },
+  ], Delta), 0);
+  assert.equal(editor.updated, undefined);
+});
+
+test("unpunctuated prose stays eligible for topic labels", async () => {
+  const { insertTopicLabels, hasUntitledTopicSections } = await loadEditorAI();
+  const text = "We need to hire two engineers\nThe service processes customer requests\n";
+  const editor = editorFor(text);
+  assert.equal(hasUntitledTopicSections(editor), true);
+  assert.equal(insertTopicLabels(editor, [{ topic: "Hiring plan", index: 0 }], Delta), 1);
+  assert.equal(editor.text, "Hiring plan\n" + text);
+});

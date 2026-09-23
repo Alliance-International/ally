@@ -125,14 +125,94 @@ function documentIndex(contents, textIndex) {
   return index;
 }
 
+// Formatting is lost by getText(). Carry only existing heading positions to
+// the API, using the same UTF-16 plain-text offsets as its topic responses.
+export function topicHeadingIndexes(editor) {
+  const indexes = [];
+  let offset = 0;
+  let start = 0;
+  let line = "";
+  let allBold = true;
+  for (const op of editor.getContents().ops) {
+    if (typeof op.insert !== "string") continue;
+    for (const char of op.insert) {
+      if (char === "\n") {
+        if (line.trim() && (op.attributes?.header ||
+            (allBold && line.trim().length <= 120 && line.trim().split(/\s+/).length <= 12))) {
+          indexes.push(start);
+        }
+        start = offset + 1;
+        line = "";
+        allBold = true;
+      } else {
+        line += char;
+        if (char.trim() && !op.attributes?.bold) allBold = false;
+      }
+      offset += char.length;
+    }
+  }
+  return indexes;
+}
+
+function obviousHeading(line) {
+  const value = line.trim();
+  if (!value || value.length > 120 || value.split(/\s+/).length > 12) return false;
+  if (/^#{1,6}\s+\S/.test(value) || /^\*\*\S.*\*\*$/.test(value)) return true;
+  if (/[.!?;,。！？]$/.test(value)) return false;
+  const letters = value.match(/\p{L}/gu);
+  if (!letters) return false;
+  const hasCase = value.toUpperCase() !== value.toLowerCase();
+  if (value.endsWith(":") || (hasCase && value === value.toUpperCase())) return true;
+  if (/^(?:I|We|You|He|She|They|It|This|That|These|Those|The|A|An|There|Here|Please)\b/i.test(value)) return false;
+  return value.length <= 80 && value.split(/\s+/).length <= 8 &&
+    letters[0] !== letters[0].toLowerCase();
+}
+
+function labelledRanges(text, headingIndexes) {
+  const headings = new Set(headingIndexes);
+  const ranges = [];
+  let start = null;
+  let offset = 0;
+  let hasBody = false;
+  for (const line of text.match(/[^\r\n]*(?:\r\n|\r|\n|$)/g) || []) {
+    if (!line) continue;
+    if (!line.trim()) {
+      if (start !== null && hasBody) {
+        ranges.push([start, offset]);
+        start = null;
+        hasBody = false;
+      }
+    } else if (headings.has(offset) || obviousHeading(line)) {
+      if (start === null) start = offset;
+      hasBody = false;
+    } else if (start !== null) {
+      hasBody = true;
+    }
+    offset += line.length;
+  }
+  if (start !== null) ranges.push([start, offset]);
+  return ranges;
+}
+
+export function hasUntitledTopicSections(editor) {
+  const text = editor.getText();
+  const covered = labelledRanges(text, topicHeadingIndexes(editor));
+  return [...text.matchAll(/\S+/g)].some(({ index }) =>
+    !covered.some(([start, end]) => start <= index && index < end));
+}
+
 export function insertTopicLabels(editor, topics, Delta) {
   const text = editor.getText();
   const contents = editor.getContents();
+  const covered = labelledRanges(text, topicHeadingIndexes(editor));
   const boundaries = new Map();
   for (const topic of topics) {
     if (!Number.isInteger(topic.index) || topic.index < 0 || topic.index >= text.length ||
-        typeof topic.topic !== "string" || !topic.topic.trim() || /[\r\n]/.test(topic.topic)) continue;
+        typeof topic.topic !== "string" || !topic.topic.trim() || topic.topic.length > 200 ||
+        /[\r\n]|<\s*\/?\s*[a-zA-Z][^>]*>/.test(topic.topic)) continue;
     const index = topicBoundary(text, topic.index);
+    if (covered.some(([start, end]) =>
+      (start <= index && index < end) || (start <= topic.index && topic.index < end))) continue;
     if (!boundaries.has(index)) boundaries.set(index, topic.topic.trim());
   }
   if (!boundaries.size) return 0;

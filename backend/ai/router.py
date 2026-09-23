@@ -161,7 +161,9 @@ async def detect_topics(
 ):
     del current_user, _rate_limit
     try:
-        return TopicsResponse(topics=await service.detect_topics(request.text))
+        return TopicsResponse(topics=await service.detect_topics(
+            request.text, heading_indexes=request.heading_indexes
+        ))
     except AIError as error:
         raise _public_ai_error(error) from error
 
