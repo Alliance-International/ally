@@ -24,6 +24,8 @@ async function redirectToLogin() {
 async function responseError(response) {
   const fallback = response.status === 429
     ? "Too many requests. Please wait and try again."
+    : response.status === 413
+      ? "This document is too long. Try a shorter section."
     : "The request could not be completed.";
   let message = fallback;
   try {

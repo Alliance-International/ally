@@ -83,6 +83,10 @@ reloaded from earlier runs. Fully titled input needs no provider call. Requests
 retain authentication and distributed rate limits, and heading metadata can
 only remove eligible positions, never grant new ones. Deploy the backend
 before or together with the frontend for this request-field addition.
+Speaker labels such as `Speaker A:` are dialogue markers, not headings.
+Transcript-like input leaves capitalized dialogue lines eligible for topics.
+If Groq rejects an oversized topic request with HTTP 413, the API returns
+HTTP 413 with advice to try a shorter section instead of a generic 502.
 
 ## Groq configuration
 

@@ -137,7 +137,7 @@ export function topicHeadingIndexes(editor) {
     if (typeof op.insert !== "string") continue;
     for (const char of op.insert) {
       if (char === "\n") {
-        if (line.trim() && (op.attributes?.header ||
+        if (line.trim() && !/^speaker\s+[^:\r\n]{1,40}:/i.test(line.trim()) && (op.attributes?.header ||
             (allBold && line.trim().length <= 120 && line.trim().split(/\s+/).length <= 12))) {
           indexes.push(start);
         }
@@ -154,15 +154,19 @@ export function topicHeadingIndexes(editor) {
   return indexes;
 }
 
-function obviousHeading(line) {
+const SPEAKER_LINE = /^speaker\s+[^:\r\n]{1,40}:/i;
+
+function obviousHeading(line, transcript = false) {
   const value = line.trim();
   if (!value || value.length > 120 || value.split(/\s+/).length > 12) return false;
+  if (SPEAKER_LINE.test(value)) return false;
   if (/^#{1,6}\s+\S/.test(value) || /^\*\*\S.*\*\*$/.test(value)) return true;
   if (/[.!?;,。！？]$/.test(value)) return false;
   const letters = value.match(/\p{L}/gu);
   if (!letters) return false;
   const hasCase = value.toUpperCase() !== value.toLowerCase();
   if (value.endsWith(":") || (hasCase && value === value.toUpperCase())) return true;
+  if (transcript || /[.!?,;:]/.test(value.replace(/^\d{1,3}[.)]\s+/, ""))) return false;
   if (/^(?:I|We|You|He|She|They|It|This|That|These|Those|The|A|An|There|Here|Please)\b/i.test(value)) return false;
   return value.length <= 80 && value.split(/\s+/).length <= 8 &&
     letters[0] !== letters[0].toLowerCase();
@@ -170,6 +174,7 @@ function obviousHeading(line) {
 
 function labelledRanges(text, headingIndexes) {
   const headings = new Set(headingIndexes);
+  const transcript = (text.match(/^\s*speaker\s+[^:\r\n]{1,40}:/gim) || []).length >= 2;
   const ranges = [];
   let start = null;
   let offset = 0;
@@ -182,7 +187,7 @@ function labelledRanges(text, headingIndexes) {
         start = null;
         hasBody = false;
       }
-    } else if (headings.has(offset) || obviousHeading(line)) {
+    } else if (headings.has(offset) || obviousHeading(line, transcript)) {
       if (start === null) start = offset;
       hasBody = false;
     } else if (start !== null) {

@@ -17,6 +17,7 @@ from .contracts import (
 )
 from .exceptions import (
     AIAuthenticationError,
+    AIInputTooLargeError,
     AIMalformedResponseError,
     AIRateLimitError,
     AIRefusalError,
@@ -126,6 +127,8 @@ class GroqProvider:
         if isinstance(error, groq.InternalServerError):
             return AIRetryableProviderError("provider unavailable")
         if isinstance(error, groq.APIStatusError):
+            if getattr(error, "status_code", 0) == 413:
+                return AIInputTooLargeError("provider rejected request size")
             if getattr(error, "status_code", 0) >= 500:
                 return AIRetryableProviderError("provider unavailable")
             return AITerminalProviderError("provider rejected request")

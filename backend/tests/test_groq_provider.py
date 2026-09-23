@@ -8,6 +8,7 @@ import pytest
 from ai.contracts import AIMessage
 from ai.exceptions import (
     AIAuthenticationError,
+    AIInputTooLargeError,
     AIMalformedResponseError,
     AIRateLimitError,
     AIRefusalError,
@@ -259,6 +260,16 @@ async def test_provider_refusal_is_rejected_without_exposing_content():
                 body=None,
             ),
             AIRateLimitError,
+        ),
+        (
+            groq.APIStatusError(
+                "provider body must stay private",
+                response=httpx.Response(
+                    413, request=httpx.Request("POST", "https://api.groq.com")
+                ),
+                body=None,
+            ),
+            AIInputTooLargeError,
         ),
         (
             groq.InternalServerError(

@@ -329,3 +329,33 @@ test("unpunctuated prose stays eligible for topic labels", async () => {
   assert.equal(insertTopicLabels(editor, [{ topic: "Hiring plan", index: 0 }], Delta), 1);
   assert.equal(editor.text, "Hiring plan\n" + text);
 });
+
+test("speaker labels and wrapped transcript lines are not treated as topic headings", async () => {
+  const { insertTopicLabels, hasUntitledTopicSections } = await loadEditorAI();
+  const text = [
+    "Speaker A: The mock checkout button is unclear.",
+    "Speaker B: I agree. Swipe down for more",
+    "looks promising, but we should test it.",
+    "Speaker A: How will delivery tracking work?",
+    "Speaker C: Right. something for the",
+    "support team to review.",
+    "",
+  ].join("\n");
+  const editor = editorFor(text);
+  assert.equal(hasUntitledTopicSections(editor), true);
+  assert.equal(insertTopicLabels(editor, [{ topic: "Checkout and delivery discussion", index: 0 }], Delta), 1);
+  assert.equal(editor.text, "Checkout and delivery discussion\n" + text);
+});
+
+test("bold speaker lines are dialogue, while real formatted titles stay protected", async () => {
+  const { topicHeadingIndexes, hasUntitledTopicSections } = await loadEditorAI();
+  const text = "Speaker A: Swipe down for more\nSpeaker B: I agree.\n\nReal title\nBody text.\n";
+  const editor = editorFor(text, [
+    { insert: "Speaker A: Swipe down for more", attributes: { bold: true } },
+    { insert: "\nSpeaker B: I agree.\n\n" },
+    { insert: "Real title", attributes: { bold: true } },
+    { insert: "\nBody text.\n" },
+  ]);
+  assert.deepEqual([...topicHeadingIndexes(editor)], [text.indexOf("Real title")]);
+  assert.equal(hasUntitledTopicSections(editor), true);
+});

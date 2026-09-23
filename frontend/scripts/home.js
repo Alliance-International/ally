@@ -1496,7 +1496,7 @@ const App = (() => {
         saveStateToLocalStorage();
         showAlert("Topics detected and labeled in the text.", "success");
       } else {
-        showAlert("No new topic labels are needed. Existing headings were kept.", "info");
+        showAlert("No distinct untitled topics were found to label.", "info");
       }
     } catch (error) {
       showAlert(

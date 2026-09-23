@@ -451,6 +451,18 @@ test("API client does not refresh on 403 and exposes 429 Retry-After safely", as
   );
 });
 
+test("API client explains a non-JSON 413 response", async () => {
+  const oversized = await loadApiClient({
+    refresh: null,
+    responses: [new Response("Payload Too Large", { status: 413 })],
+    session: { access_token: "token" },
+  });
+  await assert.rejects(
+    oversized.namespace.authenticatedJson("/ai/topics"),
+    (error) => error.status === 413 && /shorter section/i.test(error.message)
+  );
+});
+
 test("API client fails closed and redirects when a session is absent", async () => {
   const { calls, namespace, redirects } = await loadApiClient({
     refresh: null,

@@ -4,6 +4,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 
+from ai.exceptions import AIInputTooLargeError
 from ai.factory import get_ai_service, get_ai_store
 from ai.schemas import MeetingGenerationResponse
 from auth import AuthenticatedUser, get_current_user
@@ -192,6 +193,22 @@ def test_topic_route_preserves_formatted_heading_positions():
         response = client.post("/ai/topics", json={"text": text, "heading_indexes": [index]})
         assert response.status_code == 200
         assert service.heading_indexes == [index]
+    finally:
+        uninstall()
+
+
+def test_topic_route_returns_actionable_message_for_provider_413():
+    class OversizedService(FakeService):
+        async def detect_topics(self, text, *, heading_indexes=None):
+            raise AIInputTooLargeError("provider rejected request size")
+
+    install(OversizedService())
+    try:
+        response = client.post("/ai/topics", json={"text": "Synthetic conversation."})
+        assert response.status_code == 413
+        assert response.json() == {
+            "detail": "This document is too long to detect topics at once. Try a shorter section."
+        }
     finally:
         uninstall()
 

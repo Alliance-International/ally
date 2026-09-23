@@ -164,6 +164,11 @@ async def detect_topics(
         return TopicsResponse(topics=await service.detect_topics(
             request.text, heading_indexes=request.heading_indexes
         ))
+    except AIInputTooLargeError as error:
+        raise HTTPException(
+            status_code=413,
+            detail="This document is too long to detect topics at once. Try a shorter section.",
+        ) from error
     except AIError as error:
         raise _public_ai_error(error) from error
 

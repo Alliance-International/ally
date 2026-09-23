@@ -635,6 +635,32 @@ async def test_unpunctuated_prose_is_not_treated_as_an_existing_heading():
 
 
 @pytest.mark.asyncio
+async def test_speaker_turns_and_wrapped_dialogue_are_not_existing_topic_headings():
+    import json
+
+    source = (
+        "Speaker A: The mock checkout button is unclear.\n"
+        "Speaker B: I agree. Swipe down for more\n"
+        "looks promising, but we should test it.\n"
+        "Speaker A: How will delivery tracking work?\n"
+        "Speaker C: Right. something for the\n"
+        "support team to review.\n"
+    )
+    provider = FakeProvider(structured=[{"topics": [
+        {"topic": "Checkout and delivery discussion", "block_id": 0},
+    ]}])
+    topics = await AIService(
+        settings(ai_max_input_chars=2000, ai_max_estimated_input_tokens=2000),
+        provider, FakeStore(),
+    ).detect_topics(source)
+    assert [(topic.topic, topic.index) for topic in topics] == [
+        ("Checkout and delivery discussion", 0)
+    ]
+    payload = json.loads(provider.structured_calls[0]["messages"][1].content)
+    assert 0 in payload["eligible_block_ids"]
+
+
+@pytest.mark.asyncio
 async def test_rich_text_heading_metadata_only_removes_candidates_and_uses_utf16():
     source = "🚀 An untitled introduction.\r\n\r\nexisting title\r\nKeep this body.\r\n"
     index = len(source[:source.index("existing title")].encode("utf-16-le")) // 2
